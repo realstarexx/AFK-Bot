@@ -41,7 +41,7 @@ utils:
   # Answers the login or register prompt of auth plugins such as AuthMe
   auto-auth:
     enabled: true
-    password: "KeepAliveByStarexx"                                       # Password used for both commands (AUTH_PASSWORD overrides it)
+    password: #  PASS                                  # Password used for both commands (AUTH_PASSWORD overrides it)
     register-trigger: /register                        # Server message text that means a registration is required
     login-trigger: /login                              # Server message text that means a login is required
     register-command: /register {password} {password}  # Command sent on registration prompts
