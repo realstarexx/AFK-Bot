@@ -1,16 +1,20 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const readline = require('readline');
 const yaml = require('js-yaml');
 const mineflayer = require('mineflayer');
 const minecraftData = require('minecraft-data');
+const { ping } = require('minecraft-protocol');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const setupRejoin = require('./rejoin');
 const config = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config.yml'), 'utf8'));
 const { server, dashboard, position, utils, movement, modules, combat, beds, chat, discord } = config;
 const avoid = config['avoid-mobs'];
 const startup = config['startup-commands'];
+const watch = utils['server-watch'];
+const offlinePattern = new RegExp(watch['offline-pattern'], 'i');
 const greeting = new RegExp(`\\b(${chat.greetings.join('|')})\\b`, 'i');
 const account = config.accounts && config.accounts[0];
 
@@ -20,11 +24,15 @@ if (!account || !account.username) {
 }
 
 const PORT = process.env.PORT || dashboard.port;
-const state = { connected: false, startedAt: Date.now(), attempts: 0 };
+const serverHost = process.env.SERVER_HOST || server.host;
+const serverPort = Number(process.env.SERVER_PORT) || server.port;
+const apiToken = process.env.API_TOKEN;
+const state = { connected: false, paused: false, startedAt: Date.now(), attempts: 0 };
 
 let bot = null;
 let timers = [];
 let reconnectTimer = null;
+let reconnectGen = 0;
 let connectTimer = null;
 
 const log = (tag, message) => console.log(`[${tag}] ${message}`);
@@ -53,7 +61,7 @@ const page = `
                 <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Position</dt>
                 <dd id="position" style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6;overflow-wrap:anywhere">...</dd>
                 <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Server</dt>
-                <dd style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6;overflow-wrap:anywhere">${escapeHtml(server.host)}:${escapeHtml(server.port)}</dd>
+                <dd style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6;overflow-wrap:anywhere">${escapeHtml(serverHost)}:${escapeHtml(serverPort)}</dd>
             </dl>
         </main>
         <script>
@@ -83,18 +91,39 @@ const page = `
 </html>
 `;
 
+function sendJson(res, code, body) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+function authorized(req, url) {
+  if (!apiToken) return true;
+  const given = Buffer.from(req.headers.authorization?.replace(/^Bearer /, '') || url.searchParams.get('token') || '');
+  const expected = Buffer.from(apiToken);
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
+function currentStatus() {
+  if (state.paused) return 'stopped';
+  return state.connected ? 'connected' : 'disconnected';
+}
+
 http.createServer((req, res) => {
-  if (req.url === '/health') {
+  const url = new URL(req.url, 'http://localhost');
+
+  if (url.pathname === '/health') {
     const pos = bot && bot.entity ? bot.entity.position : null;
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: state.connected ? 'connected' : 'disconnected',
+    sendJson(res, 200, {
+      status: currentStatus(),
       uptime: uptime(),
       position: pos ? [pos.x, pos.y, pos.z] : null,
       reconnectAttempts: state.attempts
-    }));
-  } else if (req.url === '/ping') {
+    });
+  } else if (url.pathname === '/ping') {
     res.end('pong');
+  } else if (url.pathname === '/join' || url.pathname === '/disconnect') {
+    if (!authorized(req, url)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    sendJson(res, 200, { ok: true, status: url.pathname === '/join' ? joinServer() : leaveServer() });
   } else {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(page);
@@ -147,15 +176,66 @@ function reconnectDelay() {
   );
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer) return;
-  state.attempts++;
-  const delay = reconnectDelay();
-  log('Bot', `Reconnecting in ${delay / 1000}s (attempt ${state.attempts})`);
-  reconnectTimer = setTimeout(() => {
+function serverOnline() {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), watch.timeout);
+    ping({ host: serverHost, port: serverPort }, (err, result) => {
+      clearTimeout(timer);
+      const version = result && result.version ? String(result.version.name) : '';
+      resolve(!err && !!result && !offlinePattern.test(version));
+    });
+  });
+}
+
+function cancelReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  reconnectGen++;
+}
+
+function scheduleReconnect(delay) {
+  if (reconnectTimer || state.paused) return;
+  const generation = reconnectGen;
+  if (delay === undefined) {
+    state.attempts++;
+    delay = reconnectDelay();
+    log('Bot', `Reconnecting in ${delay / 1000}s (attempt ${state.attempts})`);
+  }
+  reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
+    if (watch.enabled && !(await serverOnline())) {
+      if (generation !== reconnectGen || state.paused) return;
+      log('Watch', `Server offline, checking again in ${watch.interval / 1000}s`);
+      scheduleReconnect(watch.interval);
+      return;
+    }
+    if (generation !== reconnectGen || state.paused) return;
     createBot();
   }, delay);
+}
+
+function joinServer() {
+  if (state.connected && !state.paused) return 'already-connected';
+  state.paused = false;
+  cancelReconnect();
+  state.attempts = 0;
+  log('Api', 'Join requested');
+  createBot();
+  return 'joining';
+}
+
+function leaveServer() {
+  if (state.paused) return 'already-stopped';
+  state.paused = true;
+  cancelReconnect();
+  const wasConnected = state.connected;
+  state.connected = false;
+  teardown();
+  log('Api', 'Disconnect requested');
+  if (wasConnected && discord && discord.events && discord.events.disconnect) {
+    notify('Disconnected: requested through the API', 'disconnect');
+  }
+  return 'stopped';
 }
 
 function teardown() {
@@ -303,15 +383,15 @@ function startModules(target) {
 
 function createBot() {
   teardown();
-  log('Bot', `Connecting to ${server.host}:${server.port}`);
+  log('Bot', `Connecting to ${serverHost}:${serverPort}`);
 
   try {
     bot = mineflayer.createBot({
       username: account.username,
       password: account.password || undefined,
       auth: account.type,
-      host: server.host,
-      port: server.port,
+      host: serverHost,
+      port: serverPort,
       version: server.version,
       checkTimeoutInterval: server['keepalive-timeout']
     });
@@ -339,7 +419,7 @@ function createBot() {
     log('Bot', 'Spawned');
     startModules(current);
     if (discord && discord.events && discord.events.connect) {
-      notify(`Connected to \`${server.host}\``, 'connect');
+      notify(`Connected to \`${serverHost}\``, 'connect');
     }
   });
 
@@ -364,7 +444,11 @@ function createBot() {
 readline.createInterface({ input: process.stdin, terminal: false }).on('line', (line) => {
   const input = line.trim();
   if (input === 'status') {
-    log('Console', `connected=${state.connected} uptime=${uptime()}s`);
+    log('Console', `${currentStatus()} uptime=${uptime()}s`);
+  } else if (input === 'join') {
+    log('Console', joinServer());
+  } else if (input === 'disconnect') {
+    log('Console', leaveServer());
   } else if (!bot || !state.connected) {
     log('Console', 'Bot not connected');
   } else if (input.startsWith('say ')) {
