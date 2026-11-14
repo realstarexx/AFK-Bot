@@ -1,0 +1,134 @@
+name: Potato
+
+# Accounts the bot can log in with (only the first entry is used)
+accounts:
+  - username: Minecraft   # In-game name
+    password: ""          # Account password, only needed for online accounts
+    type: offline         # offline for cracked servers, microsoft for premium
+
+# Minecraft server to join
+server:
+  host: CocoVile.aternos.me          # Server address
+  port: 25170                        # Server port
+  version: "1.21.1"                   # Minecraft version the bot connects with
+  connect-timeout: 60000        # ms to wait for the bot to spawn before retrying
+  keepalive-timeout: 120000     # ms without server packets before the connection is treated as dead
+
+# Built-in status page and keep-alive
+dashboard:
+  host: 0.0.0.0                     # Address the status page listens on
+  port: 5000                      # Status page port (the PORT environment variable overrides it)
+  refresh-interval: 5000         # ms between status page refreshes
+  self-ping-interval: 600000   # ms between self-pings (only active when PUBLIC_URL is set)
+
+# Spot the bot walks to after spawning
+position:
+  enabled: true # Walk to the coordinates below after joining
+  x: 0
+  y: 100
+  z: 0
+
+# Commands the bot sends in chat after spawning
+startup-commands:
+  delay: 3000          # ms to wait after spawn before the first command
+  gap: 1000           # ms between each command
+  list:
+    - /gamerule sendCommandFeedback false
+    - /gamemode creative
+
+utils:
+  # Answers the login or register prompt of auth plugins such as AuthMe
+  auto-auth:
+    enabled: true
+    password: "KeepAliveByStarexx"                                                  # Password used for both commands (AUTH_PASSWORD overrides it)
+    register-trigger: /register                                   # Server message text that means a registration is required
+    login-trigger: /login                                        # Server message text that means a login is required
+    register-command: /register {password} {password}   # Command sent on registration prompts
+    login-command: /login {password}                      # Command sent on login prompts
+
+  # Small repeated actions that stop the server from marking the bot as idle
+  anti-afk:
+    enabled: true
+    sneak: true            # Keep the bot sneaking
+    interval: 30000       # ms between jumps
+    jump-duration: 100   # ms the jump key is held
+
+  chat-log: true # Print in-game chat to the console
+
+  auto-reconnect: true             # Rejoin automatically after a disconnect
+  auto-reconnect-delay: 2000     # ms before the first reconnect attempt
+  max-reconnect-delay: 20000   # ms upper limit of the reconnect delay
+  reconnect-backoff-step: 1000  # ms added to the delay for every failed attempt
+
+  # Leaves and rejoins at random intervals
+  periodic-rejoin:
+    enabled: false
+    min-interval: 20              # Shortest time in minutes before leaving
+    max-interval: 60             # Longest time in minutes before leaving
+    reason: Periodic Rejoin      # Quit reason, also used to skip the Discord disconnect alert
+
+movement:
+  # Walks around the current position in a circle
+  circle-walk:
+    enabled: true
+    radius: 4           # Blocks from the current position to each waypoint
+    speed: 3000      # ms between waypoints
+    angle-step: 45   # Degrees the circle advances per waypoint
+
+  # Turns the head in random directions
+  look-around:
+    enabled: true
+    interval: 5000    # ms between turns
+    pitch-range: 45  # Total degrees of up and down head movement
+
+  # Jumps at a steady rate
+  random-jump:
+    enabled: true
+    interval: 10000       # ms between jumps
+    jump-duration: 300  # ms the jump key is held
+
+# Feature switches
+modules:
+  avoid-mobs: true  # Step back when something gets close
+  combat: true     # Enable the combat section below
+  beds: true       # Sleep in a nearby bed at night
+  chat: true      # Enable the chat section below
+
+# Steps back when a mob or another player is too close
+avoid-mobs:
+  safe-distance: 5      # Blocks
+  interval: 2000       # ms between checks
+  back-duration: 500 # ms the bot walks backwards
+
+combat:
+  attack-mobs: true        # Attack mobs in range
+  attack-range: 4          # Blocks
+  attack-interval: 1500   # ms between attacks
+  auto-eat: true         # Eat when hungry
+  eat-below: 14        # Food level (0 to 20) that triggers eating
+
+# Sleeping settings
+beds:
+  night-start: 12500   # World time at which the bot starts looking for a bed
+  night-end: 23500     # World time at which it stops
+  search-distance: 8   # Blocks to look for a bed
+  interval: 10000      # ms between checks
+
+# Replies to players in chat
+chat:
+  respond: false        # Reply to greetings
+  greetings:           # Words that trigger a reply
+    - hello
+    - hi
+  reply: "{player} is Gay!" # Reply text, {player} is the sender's name
+
+# Discord webhook alerts
+discord:
+  enabled: false
+  webhook: ""          # Webhook URL (DISCORD_WEBHOOK_URL overrides it)
+  events:
+    connect: true      # Alert when the bot joins
+    disconnect: true   # Alert when the bot leaves
+  colors:
+    connect: 4906624     # Embed color for join alerts (decimal)
+    disconnect: 16281969 # Embed color for leave alerts (decimal)
