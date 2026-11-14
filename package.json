@@ -1,7 +1,7 @@
 {
   "name": "OfflineServer",
-  "version": "1.0.0",
-  "description": "AFK bot that keeps a Potato Alive.",
+  "version": "1.0.2",
+  "description": "AFK bot that keeps a Minecraft server online.",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -14,6 +14,7 @@
   "dependencies": {
     "js-yaml": "^4.1.0",
     "minecraft-data": "^3.103.0",
+    "minecraft-protocol": "^1.67.0",
     "mineflayer": "^4.34.0",
     "mineflayer-pathfinder": "^2.4.5"
   }
