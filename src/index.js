@@ -7,7 +7,6 @@ const mineflayer = require('mineflayer');
 const minecraftData = require('minecraft-data');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const setupRejoin = require('./rejoin');
-
 const config = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config.yml'), 'utf8'));
 const { server, dashboard, position, utils, movement, modules, combat, beds, chat, discord } = config;
 const avoid = config['avoid-mobs'];
@@ -36,70 +35,46 @@ const page = `
 <!doctype html>
 <html lang="en">
     <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+        <meta name="theme-color" content="#000">
         <title>${escapeHtml(config.name)}</title>
-        <style>
-            body {
-                margin: 0;
-                min-height: 100vh;
-                display: grid;
-                place-items: center;
-                background: #0f172a;
-                color: #f8fafc;
-                font-family: system-ui, sans-serif;
-            }
-            main {
-                width: min(360px, 90vw);
-                padding: 24px;
-                background: #1e293b;
-                border: 1px solid #334155;
-                border-radius: 12px;
-            }
-            h1 {
-                margin: 0 0 8px;
-                font-size: 20px;
-            }
-            dt {
-                margin-top: 16px;
-                color: #94a3b8;
-                font-size: 12px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-            }
-            dd {
-                margin: 4px 0 0;
-                color: #2dd4bf;
-                font-size: 16px;
-            }
-        </style>
     </head>
-    <body>
-        <main>
-            <h1>${escapeHtml(config.name)}</h1>
-            <dl>
-                <dt>Status</dt>
-                <dd id="status">...</dd>
-                <dt>Uptime</dt>
-                <dd id="uptime">...</dd>
-                <dt>Position</dt>
-                <dd id="position">...</dd>
-                <dt>Server</dt>
-                <dd>${escapeHtml(server.host)}:${escapeHtml(server.port)}</dd>
+    <body style="margin:0;min-height:100vh;min-height:100dvh;padding:max(24px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));box-sizing:border-box;background:#000;color:#f5f5f5;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;-webkit-font-smoothing:antialiased">
+        <main style="width:100%;max-width:480px;margin:0 auto;padding-top:clamp(40px,12vh,120px)">
+            <h1 style="margin:0 0 56px;font-size:clamp(20px,5vw,24px);font-weight:500;letter-spacing:-.8px;overflow-wrap:anywhere">
+                ${escapeHtml(config.name)}
+            </h1>
+            <dl style="margin:0">
+                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Status</dt>
+                <dd id="status" style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6">...</dd>
+                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Uptime</dt>
+                <dd id="uptime" style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6">...</dd>
+                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Position</dt>
+                <dd id="position" style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6;overflow-wrap:anywhere">...</dd>
+                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Server</dt>
+                <dd style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6;overflow-wrap:anywhere">${escapeHtml(server.host)}:${escapeHtml(server.port)}</dd>
             </dl>
         </main>
         <script>
-            const $ = (id) => document.getElementById(id);
-            const format = (s) => Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm ' + (s % 60) + 's';
+            const $ = id => document.getElementById(id);
+            const format = s => Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm ' + (s % 60) + 's';
+
             async function refresh() {
-              try {
-                const data = await (await fetch('/health')).json();
-                $('status').textContent = data.status;
-                $('uptime').textContent = format(data.uptime);
-                $('position').textContent = data.position ? data.position.map(Math.round).join(', ') : 'unknown';
-              } catch {
-                $('status').textContent = 'offline';
-              }
+                try {
+                    const response = await fetch('/health');
+                    if (!response.ok) throw new Error('Request failed');
+
+                    const data = await response.json();
+
+                    $('status').textContent = data.status ?? 'unknown';
+                    $('uptime').textContent = format(data.uptime ?? 0);
+                    $('position').textContent = Array.isArray(data.position)
+                        ? data.position.map(Math.round).join(', ')
+                        : 'unknown';
+                } catch {
+                    $('status').textContent = 'offline';
+                }
             }
             refresh();
             setInterval(refresh, ${dashboard['refresh-interval']});
