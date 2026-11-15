@@ -64,13 +64,14 @@ utils:
   max-reconnect-delay: 20000   # ms upper limit of the reconnect delay
   reconnect-backoff-step: 1000 # ms added to the delay for every failed attempt
 
-  # Pings the server and only joins once it reports online, so a long outage does not spam login attempts
+    # Pings the server and only joins once it reports online, so a long outage does not spam login attempts
   server-watch:
     enabled: true
-    interval: 120000         # ms between status checks while the server is offline
+    interval: 300000         # ms between status checks while the server is offline
+    max-tries: 30            # Failed checks before the bot gives up and stops until /api join
     timeout: 5000            # ms to wait for a status reply before treating the server as offline
     offline-pattern: offline # Case-insensitive text in the server's version label that means offline (Aternos shows Offline)
-
+    
   # Leaves and rejoins at random intervals
   periodic-rejoin:
     enabled: false
