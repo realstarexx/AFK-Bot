@@ -3,13 +3,13 @@ name: Starexx AFK Bot
 
 # Accounts the bot can log in with (only the first entry is used)
 accounts:
-  - username: Minecraft # In-game name
+  - username: Minecraft   # In-game name
     password: ""          # Account password, only needed for online accounts
     type: offline         # offline for cracked servers, microsoft for premium
 
 # Minecraft server to join
 server:
-  host: # example.com # Server address (the SERVER_HOST environment variable overrides it)
+  host: # example.com       # Server address (the SERVER_HOST environment variable overrides it)
   port: # 19132             # Server port (the SERVER_PORT environment variable overrides it)
   version: "1.21.1"         # Minecraft version the bot connects with
   connect-timeout: 60000    # ms to wait for the bot to spawn before retrying
@@ -49,7 +49,7 @@ utils:
 
   # Small repeated actions that stop the server from marking the bot as idle
   anti-afk:
-    enabled: true
+    enabled: false
     sneak: true        # Keep the bot sneaking
     interval: 30000    # ms between jumps
     jump-duration: 100 # ms the jump key is held
@@ -97,10 +97,10 @@ movement:
 
 # Feature switches
 modules:
-  avoid-mobs: true # Step back when something gets close
-  combat: true     # Enable the combat section below
-  beds: true       # Sleep in a nearby bed at night
-  chat: true       # Enable the chat section below
+  avoid-mobs: false # Step back when something gets close
+  combat: true      # Enable the combat section below
+  beds: true        # Sleep in a nearby bed at night
+  chat: true        # Enable the chat section below
 
 # Steps back when a mob or another player is too close
 avoid-mobs:
