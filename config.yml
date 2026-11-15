@@ -1,16 +1,19 @@
+# Every true or false setting below can be overridden by an environment variable named after its path,
+# for example utils.anti-afk.enabled becomes UTILS_ANTI_AFK_ENABLED (accepts true, false, 1, 0, yes, no, on, off)
+
 # Name shown on the status page and used as the Discord webhook username
-name: Starexx AFK Bot
+name: AFK Bot
 
 # Accounts the bot can log in with (only the first entry is used)
 accounts:
-  - username: Minecraft   # In-game name
-    password: ""          # Account password, only needed for online accounts
-    type: offline         # offline for cracked servers, microsoft for premium
+  - username: BotName # In-game name
+    password: ""      # Account password, only needed for online accounts
+    type: offline     # offline for cracked servers, microsoft for premium
 
 # Minecraft server to join
 server:
-  host: # example.com       # Server address (the SERVER_HOST environment variable overrides it)
-  port: # 19132             # Server port (the SERVER_PORT environment variable overrides it)
+  host: example.com         # Server address (the SERVER_HOST environment variable overrides it)
+  port: 25565               # Server port (the SERVER_PORT environment variable overrides it)
   version: "1.21.1"         # Minecraft version the bot connects with
   connect-timeout: 60000    # ms to wait for the bot to spawn before retrying
   keepalive-timeout: 120000 # ms without server packets before the connection is treated as dead
@@ -24,7 +27,7 @@ dashboard:
 
 # Spot the bot walks to after spawning
 position:
-  enabled: false # Walk to the coordinates below after joining
+  enabled: true # Walk to the coordinates below after joining
   x: 0
   y: 100
   z: 0
@@ -41,7 +44,7 @@ utils:
   # Answers the login or register prompt of auth plugins such as AuthMe
   auto-auth:
     enabled: true
-    password: #  PASS                                  # Password used for both commands (AUTH_PASSWORD overrides it)
+    password: ""                                       # Password used for both commands (AUTH_PASSWORD overrides it)
     register-trigger: /register                        # Server message text that means a registration is required
     login-trigger: /login                              # Server message text that means a login is required
     register-command: /register {password} {password}  # Command sent on registration prompts
@@ -49,7 +52,7 @@ utils:
 
   # Small repeated actions that stop the server from marking the bot as idle
   anti-afk:
-    enabled: false
+    enabled: true
     sneak: true        # Keep the bot sneaking
     interval: 30000    # ms between jumps
     jump-duration: 100 # ms the jump key is held
@@ -78,29 +81,29 @@ utils:
 movement:
   # Walks around the current position in a circle
   circle-walk:
-    enabled: false
+    enabled: true
     radius: 4      # Blocks from the current position to each waypoint
     speed: 3000    # ms between waypoints
     angle-step: 45 # Degrees the circle advances per waypoint
 
   # Turns the head in random directions
   look-around:
-    enabled: false
+    enabled: true
     interval: 5000  # ms between turns
     pitch-range: 45 # Total degrees of up and down head movement
 
   # Jumps at a steady rate
   random-jump:
-    enabled: false
+    enabled: true
     interval: 10000    # ms between jumps
     jump-duration: 300 # ms the jump key is held
 
 # Feature switches
 modules:
-  avoid-mobs: false # Step back when something gets close
-  combat: true      # Enable the combat section below
-  beds: true        # Sleep in a nearby bed at night
-  chat: true        # Enable the chat section below
+  avoid-mobs: true # Step back when something gets close
+  combat: true     # Enable the combat section below
+  beds: true       # Sleep in a nearby bed at night
+  chat: true       # Enable the chat section below
 
 # Steps back when a mob or another player is too close
 avoid-mobs:
@@ -124,8 +127,8 @@ beds:
 
 # Replies to players in chat
 chat:
-  respond: false             # Reply to greetings
-  greetings:                 # Words that trigger a reply
+  respond: true             # Reply to greetings
+  greetings:                # Words that trigger a reply
     - hello
     - hi
   reply: "Hello, {player}!" # Reply text, {player} is the sender's name
@@ -133,7 +136,7 @@ chat:
 # Discord webhook alerts
 discord:
   enabled: false
-  webhook: ""  # Webhook URL (DISCORD_WEBHOOK_URL overrides it)
+  webhook: "" # Webhook URL (DISCORD_WEBHOOK_URL overrides it)
   events:
     connect: true    # Alert when the bot joins
     disconnect: true # Alert when the bot leaves
