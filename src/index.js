@@ -22,12 +22,24 @@ function applyEnvFlags(node, trail = []) {
   }
 }
 
+function collectFlags(node, trail = [], out = {}) {
+  for (const [key, value] of Object.entries(node)) {
+    const next = [...trail, key];
+    if (typeof value === 'boolean') out[next.join('.')] = value;
+    else if (value && typeof value === 'object' && !Array.isArray(value)) collectFlags(value, next, out);
+  }
+  return out;
+}
+
 const config = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config.yml'), 'utf8'));
 applyEnvFlags(config);
+const features = collectFlags(config);
 const { server, dashboard, position, utils, movement, modules, combat, beds, chat, discord } = config;
 const avoid = config['avoid-mobs'];
 const startup = config['startup-commands'];
 const watch = utils['server-watch'];
+const maxChecks = watch['max-tries'] ?? 30;
+const checkInterval = watch.interval ?? 300000;
 const offlinePattern = new RegExp(watch['offline-pattern'], 'i');
 const greeting = new RegExp(`\\b(${chat.greetings.join('|')})\\b`, 'i');
 const account = config.accounts && config.accounts[0];
@@ -41,7 +53,21 @@ const PORT = process.env.PORT || dashboard.port;
 const serverHost = process.env.SERVER_HOST || server.host;
 const serverPort = Number(process.env.SERVER_PORT) || server.port;
 const apiToken = process.env.API_TOKEN;
-const state = { connected: false, paused: false, startedAt: Date.now(), attempts: 0 };
+const LOG_LIMIT = 20;
+const MAX_BODY = 1024;
+const state = {
+  connected: false,
+  paused: false,
+  startedAt: Date.now(),
+  connectedAt: null,
+  attempts: 0,
+  serverOnline: null,
+  serverCheckedAt: null,
+  failedChecks: 0,
+  lastDisconnect: null,
+  lastKick: null
+};
+const logs = [];
 
 let bot = null;
 let timers = [];
@@ -49,70 +75,23 @@ let reconnectTimer = null;
 let reconnectGen = 0;
 let connectTimer = null;
 
-const log = (tag, message) => console.log(`[${tag}] ${message}`);
+const log = (tag, message) => {
+  const line = `[${tag}] ${message}`;
+  console.log(line);
+  logs.push(`${new Date().toISOString()} ${line}`);
+  if (logs.length > LOG_LIMIT) logs.shift();
+};
 const uptime = () => Math.floor((Date.now() - state.startedAt) / 1000);
-const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const round = (value) => Math.round(value * 10) / 10;
 
-const page = `
-<!doctype html>
-<html lang="en">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-        <meta name="theme-color" content="#000">
-        <title>${escapeHtml(config.name)}</title>
-    </head>
-    <body style="margin:0;min-height:100vh;min-height:100dvh;padding:max(24px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));box-sizing:border-box;background:#000;color:#f5f5f5;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;-webkit-font-smoothing:antialiased">
-        <main style="width:100%;max-width:480px;margin:0 auto;padding-top:clamp(40px,12vh,120px)">
-            <h1 style="margin:0 0 56px;font-size:clamp(20px,5vw,24px);font-weight:500;letter-spacing:-.8px;overflow-wrap:anywhere">
-                ${escapeHtml(config.name)}
-            </h1>
-            <dl style="margin:0">
-                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Status</dt>
-                <dd id="status" style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6">...</dd>
-                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Uptime</dt>
-                <dd id="uptime" style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6">...</dd>
-                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Position</dt>
-                <dd id="position" style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6;overflow-wrap:anywhere">...</dd>
-                <dt style="margin-top:32px;color:#666;font-size:11px;letter-spacing:1.5px;text-transform:uppercase">Server</dt>
-                <dd style="margin:9px 0 0;color:#eee;font-size:15px;line-height:1.6;overflow-wrap:anywhere">${escapeHtml(serverHost)}:${escapeHtml(serverPort)}</dd>
-            </dl>
-        </main>
-        <script>
-            const $ = id => document.getElementById(id);
-            const format = s => Math.floor(s / 3600) + 'h ' + Math.floor(s % 3600 / 60) + 'm ' + (s % 60) + 's';
-
-            async function refresh() {
-                try {
-                    const response = await fetch('/health');
-                    if (!response.ok) throw new Error('Request failed');
-
-                    const data = await response.json();
-
-                    $('status').textContent = data.status ?? 'unknown';
-                    $('uptime').textContent = format(data.uptime ?? 0);
-                    $('position').textContent = Array.isArray(data.position)
-                        ? data.position.map(Math.round).join(', ')
-                        : 'unknown';
-                } catch {
-                    $('status').textContent = 'offline';
-                }
-            }
-            refresh();
-            setInterval(refresh, ${dashboard['refresh-interval']});
-        </script>
-    </body>
-</html>
-`;
-
-function sendJson(res, code, body) {
-  res.writeHead(code, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
+function sendJson(res, code, body, headers = {}) {
+  res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers });
+  res.end(JSON.stringify(body, null, 2));
 }
 
-function authorized(req, url) {
+function authorized(req) {
   if (!apiToken) return true;
-  const given = Buffer.from(req.headers.authorization?.replace(/^Bearer /, '') || url.searchParams.get('token') || '');
+  const given = Buffer.from((req.headers.authorization || '').replace(/^Bearer /, ''));
   const expected = Buffer.from(apiToken);
   return given.length === expected.length && crypto.timingSafeEqual(given, expected);
 }
@@ -122,26 +101,97 @@ function currentStatus() {
   return state.connected ? 'connected' : 'disconnected';
 }
 
-http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
+function details() {
+  const live = bot && state.connected ? bot : null;
+  const pos = live && live.entity ? live.entity.position : null;
+  return {
+    name: config.name,
+    status: currentStatus(),
+    uptime: uptime(),
+    connectedFor: state.connectedAt ? Math.floor((Date.now() - state.connectedAt) / 1000) : null,
+    reconnectAttempts: state.attempts,
+    account: { username: account.username, type: account.type },
+    server: {
+      host: serverHost,
+      port: serverPort,
+      version: server.version,
+      online: state.serverOnline,
+      checkedAt: state.serverCheckedAt,
+      failedChecks: state.failedChecks,
+      maxChecks
+    },
+    player: live ? {
+      position: pos ? [round(pos.x), round(pos.y), round(pos.z)] : null,
+      health: live.health,
+      food: live.food,
+      latency: live.player ? live.player.ping : null,
+      dimension: live.game ? live.game.dimension : null,
+      playersOnline: Object.keys(live.players).length
+    } : null,
+    lastDisconnect: state.lastDisconnect,
+    lastKick: state.lastKick,
+    features,
+    logs
+  };
+}
 
-  if (url.pathname === '/health') {
-    const pos = bot && bot.entity ? bot.entity.position : null;
-    sendJson(res, 200, {
-      status: currentStatus(),
-      uptime: uptime(),
-      position: pos ? [pos.x, pos.y, pos.z] : null,
-      reconnectAttempts: state.attempts
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY) return reject(Object.assign(new Error('payload too large'), { code: 413 }));
+      chunks.push(chunk);
     });
-  } else if (url.pathname === '/ping') {
-    res.end('pong');
-  } else if (url.pathname === '/join' || url.pathname === '/disconnect') {
-    if (!authorized(req, url)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-    sendJson(res, 200, { ok: true, status: url.pathname === '/join' ? joinServer() : leaveServer() });
-  } else {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(page);
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString() || '{}'));
+      } catch {
+        reject(Object.assign(new Error('invalid json'), { code: 400 }));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+const actions = {
+  join: () => joinServer(),
+  disconnect: () => leaveServer(),
+  reconnect: () => reconnectServer()
+};
+
+async function handleApi(req, res) {
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' }, { Allow: 'POST' });
+  if (!authorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+  try {
+    const body = await readJson(req);
+    const action = body && body.action;
+    if (typeof action !== 'string' || !Object.hasOwn(actions, action)) {
+      return sendJson(res, 400, { ok: false, error: 'action must be join, disconnect or reconnect' });
+    }
+    sendJson(res, 200, { ok: true, status: actions[action]() });
+  } catch (err) {
+    if (err.code === 413) res.once('finish', () => req.socket.destroy());
+    sendJson(res, err.code || 400, { ok: false, error: err.message });
   }
+}
+
+http.createServer((req, res) => {
+  let pathname;
+  try {
+    pathname = new URL(req.url, 'http://localhost').pathname;
+  } catch {
+    return sendJson(res, 400, { ok: false, error: 'bad request' });
+  }
+
+  if (pathname === '/api') return handleApi(req, res);
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return sendJson(res, 405, { ok: false, error: 'method not allowed' }, { Allow: 'GET, HEAD' });
+  }
+  if (pathname === '/' || pathname === '/health') return sendJson(res, 200, details());
+  if (pathname === '/ping') return res.end('pong');
+  sendJson(res, 404, { ok: false, error: 'not found' });
 }).listen(PORT, dashboard.host, () => log('Server', `Listening on port ${PORT}`));
 
 const publicUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
@@ -192,11 +242,19 @@ function reconnectDelay() {
 
 function serverOnline() {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), watch.timeout);
-    ping({ host: serverHost, port: serverPort }, (err, result) => {
+    let done = false;
+    const finish = (online) => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
+      state.serverOnline = online;
+      state.serverCheckedAt = new Date().toISOString();
+      resolve(online);
+    };
+    const timer = setTimeout(() => finish(false), watch.timeout);
+    ping({ host: serverHost, port: serverPort }, (err, result) => {
       const version = result && result.version ? String(result.version.name) : '';
-      resolve(!err && !!result && !offlinePattern.test(version));
+      finish(!err && !!result && !offlinePattern.test(version));
     });
   });
 }
@@ -217,11 +275,23 @@ function scheduleReconnect(delay) {
   }
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
-    if (watch.enabled && !(await serverOnline())) {
-      if (generation !== reconnectGen || state.paused) return;
-      log('Watch', `Server offline, checking again in ${watch.interval / 1000}s`);
-      scheduleReconnect(watch.interval);
-      return;
+    if (watch.enabled) {
+      if (!(await serverOnline())) {
+        if (generation !== reconnectGen || state.paused) return;
+        state.failedChecks++;
+        if (state.failedChecks >= maxChecks) {
+          state.paused = true;
+          log('Watch', `Server still offline after ${maxChecks} checks, stopping. Use the join action to start again`);
+          if (discord && discord.events && discord.events.disconnect) {
+            notify(`Server offline after ${maxChecks} checks, bot stopped`, 'disconnect');
+          }
+          return;
+        }
+        log('Watch', `Server offline, check ${state.failedChecks}/${maxChecks}, next in ${checkInterval / 1000}s`);
+        scheduleReconnect(checkInterval);
+        return;
+      }
+      state.failedChecks = 0;
     }
     if (generation !== reconnectGen || state.paused) return;
     createBot();
@@ -233,9 +303,22 @@ function joinServer() {
   state.paused = false;
   cancelReconnect();
   state.attempts = 0;
+  state.failedChecks = 0;
   log('Api', 'Join requested');
   createBot();
   return 'joining';
+}
+
+function reconnectServer() {
+  state.paused = false;
+  cancelReconnect();
+  state.attempts = 0;
+  state.failedChecks = 0;
+  state.connected = false;
+  state.connectedAt = null;
+  log('Api', 'Reconnect requested');
+  createBot();
+  return 'reconnecting';
 }
 
 function leaveServer() {
@@ -244,6 +327,7 @@ function leaveServer() {
   cancelReconnect();
   const wasConnected = state.connected;
   state.connected = false;
+  state.connectedAt = null;
   teardown();
   log('Api', 'Disconnect requested');
   if (wasConnected && discord && discord.events && discord.events.disconnect) {
@@ -429,6 +513,7 @@ function createBot() {
   current.once('spawn', () => {
     clearTimeout(connectTimer);
     state.connected = true;
+    state.connectedAt = Date.now();
     state.attempts = 0;
     log('Bot', 'Spawned');
     startModules(current);
@@ -440,6 +525,8 @@ function createBot() {
   current.on('end', (reason) => {
     log('Bot', `Disconnected: ${reason || 'unknown'}`);
     state.connected = false;
+    state.connectedAt = null;
+    state.lastDisconnect = { reason: reason || 'unknown', at: new Date().toISOString() };
     stopTimers();
     clearTimeout(connectTimer);
     if (discord && discord.events && discord.events.disconnect && reason !== utils['periodic-rejoin'].reason) {
@@ -449,7 +536,9 @@ function createBot() {
   });
 
   current.on('kicked', (reason) => {
-    log('Kick', typeof reason === 'string' ? reason : JSON.stringify(reason));
+    const text = typeof reason === 'string' ? reason : JSON.stringify(reason);
+    state.lastKick = { reason: text, at: new Date().toISOString() };
+    log('Kick', text);
   });
 
   current.on('error', (err) => log('Bot', err.message));
@@ -463,14 +552,14 @@ readline.createInterface({ input: process.stdin, terminal: false }).on('line', (
     log('Console', joinServer());
   } else if (input === 'disconnect') {
     log('Console', leaveServer());
+  } else if (input === 'reconnect') {
+    log('Console', reconnectServer());
   } else if (!bot || !state.connected) {
     log('Console', 'Bot not connected');
   } else if (input.startsWith('say ')) {
     bot.chat(input.slice(4));
   } else if (input.startsWith('cmd ')) {
     bot.chat(`/${input.slice(4)}`);
-  } else if (input === 'reconnect') {
-    bot.quit();
   }
 });
 
