@@ -6,7 +6,7 @@ name: AFK Bot
 
 # Accounts the bot can log in with (only the first entry is used)
 accounts:
-  - username: BotName # In-game name
+  - username: Minecraft # In-game name
     password: ""      # Account password, only needed for online accounts
     type: offline     # offline for cracked servers, microsoft for premium
 
