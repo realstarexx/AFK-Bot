@@ -57,12 +57,12 @@ Toggle names follow the path of the setting in `config.yml`, in uppercase, with 
 
 ### Routes
 
-* `GET /` Full status as JSON (status, uptime, server, player, last 20 log lines)
+* `GET /` Bot Details (status, uptime, server, player, last 20 log lines)
 * `GET /health` Same JSON, used for health checks
 * `POST /api` Controls the bot
 
 ```bash
-curl -X POST https://your-app.up.railway.app/api \
+curl -X POST https://your-app-domain.com/api \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action": "join"}'
