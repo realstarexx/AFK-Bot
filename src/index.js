@@ -9,7 +9,21 @@ const minecraftData = require('minecraft-data');
 const { ping } = require('minecraft-protocol');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const setupRejoin = require('./rejoin');
+function applyEnvFlags(node, trail = []) {
+  for (const [key, value] of Object.entries(node)) {
+    const next = [...trail, key];
+    if (typeof value === 'boolean') {
+      const raw = (process.env[next.join('_').replace(/-/g, '_').toUpperCase()] || '').toLowerCase();
+      if (['true', '1', 'yes', 'on'].includes(raw)) node[key] = true;
+      else if (['false', '0', 'no', 'off'].includes(raw)) node[key] = false;
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      applyEnvFlags(value, next);
+    }
+  }
+}
+
 const config = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config.yml'), 'utf8'));
+applyEnvFlags(config);
 const { server, dashboard, position, utils, movement, modules, combat, beds, chat, discord } = config;
 const avoid = config['avoid-mobs'];
 const startup = config['startup-commands'];
