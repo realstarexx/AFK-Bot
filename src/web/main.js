@@ -1,15 +1,92 @@
 'use strict';
 
-/*
-  Dashboard page (HTML + server-side rendering).
-  render(data) takes the object returned by details() in src/index.js and returns the full HTML page.
-  The page is already filled in when it arrives, then the script keeps it live through GET /health
-  and controls the bot through POST /api ({ "action": "join" | "disconnect" }).
-*/
+function esc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
 
-const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => (
-  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-));
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '-' : d.toLocaleString();
+}
+
+function switchHtml(on, label) {
+  return '<div class="aternos-switch ' + (on ? 'enabled' : 'disabled') + '" role="img" aria-label="' + esc(label) + ': ' + (on ? 'enabled' : 'disabled') + '"><span class="switch-icon"><i class="fa-solid ' + (on ? 'fa-check' : 'fa-xmark') + '"></i></span></div>';
+}
+
+function valHtml(v, label) {
+  if (typeof v === 'boolean') return switchHtml(v, label);
+  if (v === null || v === undefined || v === '') return '<span>-</span>';
+  if (Array.isArray(v)) return '<span>' + (v.length ? esc(v.join(', ')) : '-') + '</span>';
+  return '<span>' + esc(v) + '</span>';
+}
+
+function rowHtml(label, valueHtml) {
+  return '<div class="config-row"><span>' + esc(label) + '</span>' + valueHtml + '</div>';
+}
+
+function rowsHtml(rows) {
+  return rows.map(function (r) { return rowHtml(r[0], valHtml(r[1], r[0])); }).join('');
+}
+
+function flatten(node, trail, out) {
+  Object.keys(node).forEach(function (k) {
+    const v = node[k];
+    const next = trail.concat(k);
+    if (Array.isArray(v) && v.length && v.every(function (i) { return i && typeof i === 'object'; })) {
+      v.forEach(function (item, i) { flatten(item, next.concat(String(i + 1)), out); });
+    } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+      flatten(v, next, out);
+    } else {
+      out.push([next, v]);
+    }
+  });
+  return out;
+}
+
+function configHtml(data) {
+  const groups = {};
+  const order = [];
+  flatten(data.config || {}, [], []).forEach(function (e) {
+    const p = e[0];
+    const g = p.length > 1 ? p[0] : 'general';
+    const label = p.length > 1 ? p.slice(1).join('.') : p[0];
+    if (!groups[g]) { groups[g] = []; order.push(g); }
+    groups[g].push(rowHtml(label, valHtml(e[1], label)));
+  });
+  return order.map(function (g) {
+    return '<div class="group-title">' + esc(g) + '</div><div class="rows">' + groups[g].join('') + '</div>';
+  }).join('');
+}
+
+function detailRows(data) {
+  const s = data.server || {};
+  const a = data.account || {};
+  const cut = function (t) { t = String(t); return t.length > 160 ? t.slice(0, 160) + '…' : t; };
+  return [
+    ['Account Type', a.type],
+    ['Reconnect Attempts', data.reconnectAttempts],
+    ['Server Reachable', s.online === true ? 'Yes' : s.online === false ? 'No' : 'Unknown'],
+    ['Last Server Check', s.checkedAt ? fmtTime(s.checkedAt) : '-'],
+    ['Failed Checks', s.maxChecks != null ? (s.failedChecks || 0) + '/' + s.maxChecks : '-'],
+    ['Last Disconnect', data.lastDisconnect ? cut(data.lastDisconnect.reason) + ' (' + fmtTime(data.lastDisconnect.at) + ')' : '-'],
+    ['Last Kick', data.lastKick ? cut(data.lastKick.reason) + ' (' + fmtTime(data.lastKick.at) + ')' : '-']
+  ];
+}
+
+function playerRows(data) {
+  const p = data.player;
+  if (!p) return [['Status', 'Bot is not in the server']];
+  return [
+    ['Position', p.position ? p.position.join(', ') : '-'],
+    ['Health', p.health != null ? p.health + '/20' : '-'],
+    ['Food', p.food != null ? p.food + '/20' : '-'],
+    ['Latency', p.latency != null ? p.latency + ' ms' : '-'],
+    ['Dimension', p.dimension],
+    ['Players Online', p.playersOnline]
+  ];
+}
 
 /* Shared helpers: used here for SSR and copied as source into the page script, so both always agree. */
 function fmtDuration(s) {
@@ -23,7 +100,7 @@ function fmtDuration(s) {
 
 function statusView(data) {
   const s = data && data.status;
-  if (s === 'connected') return { cls: 'online', label: 'Online', icon: 'fa-bolt', stop: true };
+  if (s === 'connected') return { cls: 'online', label: 'Online', icon: 'fa-circle-stop', stop: true };
   if (s === 'disconnected') return { cls: 'starting', label: 'Connecting', icon: 'fa-clock', stop: true };
   return { cls: 'offline', label: 'Offline', icon: 'fa-circle-stop', stop: false };
 }
@@ -95,6 +172,8 @@ header{position:fixed;top:0;left:0;width:100%;z-index:100;background:var(--heade
 .enabled .switch-icon{background:#20c997}
 .disabled .switch-icon{background:#f21d50}
 
+.group-title{margin-top:12px;padding:6px 12px;background:var(--header-light);color:#fff;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;border-radius:3px 3px 0 0}
+.group-title:first-child{margin-top:0}
 .message{min-height:20px;text-align:center;color:#68747c;font-size:14px;margin:11px 0}
 
 .log-heading{display:flex;justify-content:space-between;align-items:center;padding:17px 0 13px}
@@ -125,6 +204,7 @@ function client(init, refreshMs) {
   let busy = false;
   let autoScroll = true;
   let mark = null;
+  let cfgCache = '';
 
   const say = (text) => { $('#Message').textContent = text || ''; };
 
@@ -135,7 +215,7 @@ function client(init, refreshMs) {
     $('#StatusText').textContent = v.label;
     const btn = $('#StartBtn');
     btn.className = 'start-btn' + (v.stop ? ' stop' : '');
-    btn.innerHTML = '<i class="fa-solid ' + (v.stop ? 'fa-stop' : 'fa-power-off') + '"></i>' + (v.stop ? 'Stop' : 'Start');
+    btn.innerHTML = '<i class="fa-solid ' + (v.stop ? 'fa-circle-stop' : 'fa-power-off') + '"></i>' + (v.stop ? 'Stop' : 'Start');
     btn.disabled = busy;
   }
 
@@ -186,6 +266,10 @@ function client(init, refreshMs) {
     sw.className = 'aternos-switch ' + (on ? 'enabled' : 'disabled');
     sw.setAttribute('aria-label', 'Auto Reconnect: ' + (on ? 'enabled' : 'disabled'));
     sw.firstElementChild.innerHTML = '<i class="fa-solid ' + (on ? 'fa-check' : 'fa-xmark') + '"></i>';
+    $('#BotDetails').innerHTML = rowsHtml(detailRows(data));
+    $('#PlayerInfo').innerHTML = rowsHtml(playerRows(data));
+    const cfg = configHtml(data);
+    if (cfg !== cfgCache) { $('#ConfigGroups').innerHTML = cfg; cfgCache = cfg; }
     paintStatus();
     paintTimes();
     paintLogs();
@@ -339,7 +423,7 @@ function render(data, options = {}) {
   </div>
 
   <div class="actions">
-    <button class="start-btn${v.stop ? ' stop' : ''}" id="StartBtn"><i class="fa-solid ${v.stop ? 'fa-stop' : 'fa-power-off'}"></i>${v.stop ? 'Stop' : 'Start'}</button>
+    <button class="start-btn${v.stop ? ' stop' : ''}" id="StartBtn"><i class="fa-solid ${v.stop ? 'fa-circle-stop' : 'fa-power-off'}"></i>${v.stop ? 'Stop' : 'Start'}</button>
   </div>
 
   <section class="section">
@@ -361,6 +445,16 @@ function render(data, options = {}) {
   </section>
 
   <section class="section">
+    <div class="section-title"><i class="fa-solid fa-server"></i>Bot Details</div>
+    <div class="rows" id="BotDetails">${rowsHtml(detailRows(data))}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-title"><i class="fa-solid fa-user"></i>Player</div>
+    <div class="rows" id="PlayerInfo">${rowsHtml(playerRows(data))}</div>
+  </section>
+
+  <section class="section">
     <div class="section-title"><i class="fa-solid fa-gears"></i>Bot Configuration</div>
     <div class="rows">
       <div class="config-row"><span>Bot Username</span><span id="BotUsername">${esc((data.account && data.account.username) || '-')}</span></div>
@@ -368,6 +462,11 @@ function render(data, options = {}) {
       <div class="config-row"><span>Platform</span><span id="Platform">Java Edition</span></div>
       <div class="config-row"><span>Auto Reconnect</span><div class="aternos-switch ${on ? 'enabled' : 'disabled'}" id="AutoReconnect" role="img" aria-label="Auto Reconnect: ${on ? 'enabled' : 'disabled'}"><span class="switch-icon"><i class="fa-solid ${on ? 'fa-check' : 'fa-xmark'}"></i></span></div></div>
     </div>
+  </section>
+
+  <section class="section">
+    <div class="section-title"><i class="fa-solid fa-sliders"></i>Full Configuration</div>
+    <div id="ConfigGroups">${configHtml(data)}</div>
   </section>
 
   <p class="message" id="Message" aria-live="polite"></p>
@@ -390,9 +489,7 @@ function render(data, options = {}) {
 
 <script type="application/json" id="Init">${init}</script>
 <script>
-${fmtDuration}
-${statusView}
-${logParts}
+${[esc, fmtTime, switchHtml, valHtml, rowHtml, rowsHtml, flatten, configHtml, detailRows, playerRows, fmtDuration, statusView, logParts].map(String).join('\n')}
 (${client})(JSON.parse(document.getElementById('Init').textContent), ${refreshMs});
 </script>
 </body>
