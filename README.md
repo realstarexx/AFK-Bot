@@ -17,9 +17,6 @@ SERVER_PORT=25565
 # Auth plugin password (overrides utils.auto-auth.password)
 AUTH_PASSWORD=
 
-# Protects POST /api (without it the route is open to anyone)
-API_TOKEN=
-
 # Discord webhook URL (overrides discord.webhook)
 DISCORD_WEBHOOK_URL=
 
@@ -55,15 +52,24 @@ DISCORD_EVENTS_DISCONNECT=true
 
 Toggle names follow the path of the setting in `config.yml`, in uppercase, with dots and dashes turned into underscores. Invalid values are ignored.
 
+### Dashboard
+
+Open the app URL in a browser (`http://localhost:5000` locally) to get the dashboard.
+
+* **Details** tab: server address, bot status (Online, Connecting, Offline), **Start** / **Stop** button, uptime, bot and server info
+* **Logs** tab: last 100 log lines with Refresh, Clear, Auto-scroll and Share
+
+**Start** runs the `join` action and **Stop** runs `disconnect` (see below). The page refreshes every `dashboard.refresh-interval` ms.
+
 ### Routes
 
-* `GET /` Bot Details (status, uptime, server, player, last 20 log lines)
-* `GET /health` Same JSON, used for health checks
+* `GET /` Dashboard (HTML)
+* `GET /health` Bot Details as JSON (status, uptime, server, player, last 100 log lines), used for health checks
+* `GET /ping` Returns `pong`
 * `POST /api` Controls the bot
 
 ```bash
 curl -X POST https://your-app-domain.com/api \
-  -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action": "join"}'
 ```
@@ -74,7 +80,7 @@ curl -X POST https://your-app-domain.com/api \
 * `disconnect`: Stops the bot and keeps it offline until `join` or `reconnect` is called
 * `reconnect`: Restarts the connection immediately
 
-Send the token as an `Authorization: Bearer` header. If `API_TOKEN` is not set, `/api` is open to anyone, so set it on any public deployment.
+There is no token or login. Anyone who can reach the app URL can see the dashboard and start or stop the bot, so keep the URL private or put the app behind your own access control.
 
 ### Console
 
