@@ -89,6 +89,22 @@ function sendJson(res, code, body, headers = {}) {
   res.end(JSON.stringify(body, null, 2));
 }
 
+const MASK = '********';
+
+function publicConfig() {
+  const copy = JSON.parse(JSON.stringify(config));
+  copy.server.host = serverHost;
+  copy.server.port = serverPort;
+  copy.dashboard.port = Number(PORT);
+  (copy.accounts || []).forEach((entry) => { if (entry.password) entry.password = MASK; });
+  const auth = copy.utils && copy.utils['auto-auth'];
+  if (auth) auth.password = (process.env.AUTH_PASSWORD || auth.password) ? MASK : '';
+  if (copy.discord) copy.discord.webhook = (process.env.DISCORD_WEBHOOK_URL || copy.discord.webhook) ? MASK : '';
+  return copy;
+}
+
+const shownConfig = publicConfig();
+
 function sendHtml(res, code, html, head) {
   res.writeHead(code, {
     'Content-Type': 'text/html; charset=utf-8',
@@ -135,6 +151,7 @@ function details() {
     lastDisconnect: state.lastDisconnect,
     lastKick: state.lastKick,
     autoReconnect: !!utils['auto-reconnect'],
+    config: shownConfig,
     features,
     logs
   };
