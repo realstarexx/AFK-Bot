@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const crypto = require('crypto');
 const readline = require('readline');
 const yaml = require('js-yaml');
 const mineflayer = require('mineflayer');
@@ -9,6 +8,8 @@ const minecraftData = require('minecraft-data');
 const { ping } = require('minecraft-protocol');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const setupRejoin = require('./rejoin');
+const dashboardPage = require('./web/main');
+const pkg = require('../package.json');
 function applyEnvFlags(node, trail = []) {
   for (const [key, value] of Object.entries(node)) {
     const next = [...trail, key];
@@ -52,8 +53,7 @@ if (!account || !account.username) {
 const PORT = process.env.PORT || dashboard.port;
 const serverHost = process.env.SERVER_HOST || server.host;
 const serverPort = Number(process.env.SERVER_PORT) || server.port;
-const apiToken = process.env.API_TOKEN;
-const LOG_LIMIT = 20;
+const LOG_LIMIT = 100;
 const MAX_BODY = 1024;
 const state = {
   connected: false,
@@ -89,11 +89,14 @@ function sendJson(res, code, body, headers = {}) {
   res.end(JSON.stringify(body, null, 2));
 }
 
-function authorized(req) {
-  if (!apiToken) return true;
-  const given = Buffer.from((req.headers.authorization || '').replace(/^Bearer /, ''));
-  const expected = Buffer.from(apiToken);
-  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+function sendHtml(res, code, html, head) {
+  res.writeHead(code, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY'
+  });
+  res.end(head ? undefined : html);
 }
 
 function currentStatus() {
@@ -106,6 +109,7 @@ function details() {
   const pos = live && live.entity ? live.entity.position : null;
   return {
     name: config.name,
+    version: pkg.version,
     status: currentStatus(),
     uptime: uptime(),
     connectedFor: state.connectedAt ? Math.floor((Date.now() - state.connectedAt) / 1000) : null,
@@ -130,6 +134,7 @@ function details() {
     } : null,
     lastDisconnect: state.lastDisconnect,
     lastKick: state.lastKick,
+    autoReconnect: !!utils['auto-reconnect'],
     features,
     logs
   };
@@ -163,7 +168,6 @@ const actions = {
 
 async function handleApi(req, res) {
   if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'method not allowed' }, { Allow: 'POST' });
-  if (!authorized(req)) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
   try {
     const body = await readJson(req);
     const action = body && body.action;
@@ -189,7 +193,10 @@ http.createServer((req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return sendJson(res, 405, { ok: false, error: 'method not allowed' }, { Allow: 'GET, HEAD' });
   }
-  if (pathname === '/' || pathname === '/health') return sendJson(res, 200, details());
+  if (pathname === '/') {
+    return sendHtml(res, 200, dashboardPage.render(details(), { refreshInterval: dashboard['refresh-interval'] }), req.method === 'HEAD');
+  }
+  if (pathname === '/health') return sendJson(res, 200, details());
   if (pathname === '/ping') return res.end('pong');
   sendJson(res, 404, { ok: false, error: 'not found' });
 }).listen(PORT, dashboard.host, () => log('Server', `Listening on port ${PORT}`));
