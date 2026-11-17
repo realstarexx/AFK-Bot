@@ -78,7 +78,7 @@ let connectTimer = null;
 const log = (tag, message) => {
   const line = `[${tag}] ${message}`;
   console.log(line);
-  logs.push(`${new Date().toISOString()} ${line}`);
+  logs.push(`${new Date().toISOString()} ${line.slice(0, 500)}`);
   if (logs.length > LOG_LIMIT) logs.shift();
 };
 const uptime = () => Math.floor((Date.now() - state.startedAt) / 1000);
@@ -86,7 +86,7 @@ const round = (value) => Math.round(value * 10) / 10;
 
 function sendJson(res, code, body, headers = {}) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers });
-  res.end(JSON.stringify(body, null, 2));
+  res.end(JSON.stringify(body));
 }
 
 const MASK = '********';
@@ -497,9 +497,9 @@ function startModules(target) {
   }
 
   startup.list.forEach((command, index) => {
-    setTimeout(() => {
+    timers.push(setTimeout(() => {
       if (bot === target && state.connected) target.chat(command);
-    }, startup.delay + index * startup.gap);
+    }, startup.delay + index * startup.gap));
   });
 }
 
@@ -515,7 +515,8 @@ function createBot() {
       host: serverHost,
       port: serverPort,
       version: server.version,
-      checkTimeoutInterval: server['keepalive-timeout']
+      checkTimeoutInterval: server['keepalive-timeout'],
+      viewDistance: server['view-distance'] || (position.enabled ? 'short' : 'tiny')
     });
   } catch (err) {
     log('Bot', `Failed to create bot: ${err.message}`);
@@ -556,12 +557,13 @@ function createBot() {
     if (discord && discord.events && discord.events.disconnect && reason !== utils['periodic-rejoin'].reason) {
       notify(`Disconnected: ${reason || 'unknown'}`, 'disconnect');
     }
+    if (bot === current) teardown();
     if (utils['auto-reconnect']) scheduleReconnect();
   });
 
   current.on('kicked', (reason) => {
     const text = typeof reason === 'string' ? reason : JSON.stringify(reason);
-    state.lastKick = { reason: text, at: new Date().toISOString() };
+    state.lastKick = { reason: text.slice(0, 500), at: new Date().toISOString() };
     log('Kick', text);
   });
 
