@@ -1,11 +1,5 @@
-'use strict';
 
-/*
-  Dashboard page (HTML + server-side rendering).
-  render(data) takes the object returned by details() in src/index.js and returns the full HTML page.
-  The page is already filled in when it arrives, then the script keeps it live through GET /health
-  and controls the bot through POST /api ({ "action": "join" | "disconnect" }).
-*/
+'use strict';
 
 const COLORS = {
   black: '#000000', dark_blue: '#0000AA', dark_green: '#00AA00', dark_aqua: '#00AAAA',
@@ -19,14 +13,12 @@ const COLORS = {
   bright_gold: '#FFD700', beige: '#F5F5DC'
 };
 
-/* Legacy section-sign codes (§c, §l ...) */
 const LEGACY = {
   0: 'black', 1: 'dark_blue', 2: 'dark_green', 3: 'dark_aqua', 4: 'dark_red', 5: 'dark_purple',
   6: 'gold', 7: 'gray', 8: 'dark_gray', 9: 'blue', a: 'green', b: 'aqua', c: 'red',
   d: 'light_purple', e: 'yellow', f: 'white'
 };
 
-/* Common disconnect messages sent as translation keys */
 const LANG = {
   'multiplayer.disconnect.kicked': 'Kicked by an operator',
   'multiplayer.disconnect.banned': 'You are banned from this server',
@@ -43,9 +35,6 @@ const LANG = {
   'disconnect.quitting': 'Quitting',
   'disconnect.kicked': 'Was kicked from the game'
 };
-
-/* ---------- Shared helpers ----------
-   Used here for SSR and copied as source into the page script, so both always agree. */
 
 function esc(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
@@ -73,8 +62,6 @@ function statusView(data) {
   if (s === 'disconnected') return { cls: 'starting', label: 'Connecting', icon: 'fa-clock', stop: true };
   return { cls: 'offline', label: 'Offline', icon: 'fa-circle-stop', stop: false };
 }
-
-/* ---------- Tellraw / kick JSON resolver ---------- */
 
 function flag(v, fallback) {
   return v === undefined ? fallback : (v === true || v === 1 || v === '1' || v === 'true');
@@ -150,7 +137,6 @@ function compHtml(node, inh) {
   return own + extra;
 }
 
-/* {"type":"string","value":"text"} (NBT-style) -> plain JSON component */
 function nbtToJson(n) {
   if (Array.isArray(n)) return n.map(nbtToJson);
   if (!n || typeof n !== 'object') return n;
@@ -179,7 +165,6 @@ function nbtToJson(n) {
   return n;
 }
 
-/* A stored kick / disconnect reason: JSON component, NBT-style JSON or plain text */
 function reasonHtml(reason) {
   const t = String(reason == null ? '' : reason);
   let parsed;
@@ -187,7 +172,6 @@ function reasonHtml(reason) {
   return compHtml(nbtToJson(parsed), {}) || esc(t);
 }
 
-/* Log text that contains a JSON component after some prefix, e.g. "[Kick] {...}" */
 function richInline(text) {
   const i = text.indexOf('{');
   if (i < 0) return null;
@@ -218,8 +202,6 @@ function logRowHtml(line) {
   const body = richInline(p.text) || esc(p.text);
   return '<div class="console-row"><span class="log-time">' + esc(p.time) + '</span><span class="' + p.cls + '">' + body + '</span></div>';
 }
-
-/* ---------- Rows ---------- */
 
 function switchHtml(on, label) {
   return '<div class="aternos-switch ' + (on ? 'enabled' : 'disabled') + '" role="img" aria-label="' + esc(label) + ': ' + (on ? 'enabled' : 'disabled') + '"><span class="switch-icon"><i class="fa-solid ' + (on ? 'fa-check' : 'fa-xmark') + '"></i></span></div>';
@@ -255,7 +237,6 @@ function detailRows(data) {
   ];
 }
 
-/* Bot configuration + player in one section */
 function botInfoRows(data) {
   const s = data.server || {};
   const p = data.player;
@@ -275,8 +256,6 @@ function botInfoRows(data) {
     ['Players Online', p.playersOnline]
   ]);
 }
-
-/* ---------- bot.properties (full configuration, flat, switches first) ---------- */
 
 function flatten(node, trail, out) {
   Object.keys(node).forEach(function (k) {
@@ -319,8 +298,6 @@ const CSS = `
 :root{--header:#2b3942;--header-light:#46535c;--bg:#f0f0f0;--text:#35414a;--blue:#328acb;--green:#20ce91;--red:#f52250;--amber:#e8a93b;--border:#d5dadd;--props-bg:#2f3d47}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--bg);color:var(--text);font-family:'Play',sans-serif;padding-top:calc(66px + env(safe-area-inset-top,0px));padding-bottom:24px}
-body.on-props{background:var(--props-bg)}
-body.on-log{padding-bottom:0}
 button,textarea{font:inherit}
 button{cursor:pointer}
 button:disabled{opacity:.6;cursor:wait}
@@ -338,7 +315,7 @@ header{position:fixed;top:0;left:0;width:100%;z-index:100;background:var(--heade
 .tab.active{color:#fff;border-bottom-color:var(--green)}
 
 .container{width:100%;max-width:1000px;margin:auto;padding:0 16px}
-.page-title{color:var(--blue);font-size:32px;margin:18px 0 13px}
+.page-title{color:var(--blue);font-size:32px;margin:18px -8px 13px}
 
 .server-hero{background:var(--header);color:#fff;text-align:center;margin:0 -16px;padding:22px 16px}
 .server-address{font-size:24px;font-weight:700;overflow-wrap:anywhere}
@@ -354,7 +331,7 @@ header{position:fixed;top:0;left:0;width:100%;z-index:100;background:var(--heade
 .start-btn.stop{background:var(--red)}
 .start-btn i{font-size:18px}
 
-.section{margin:20px 0}
+.section{margin:20px -8px}
 .section-title{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;background:var(--blue);color:#fff;font-size:15px;font-weight:700;border-radius:3px 3px 0 0}
 .section-title i{font-size:14px}
 .rows{border-radius:0 3px 3px 3px;overflow:hidden}
@@ -366,10 +343,25 @@ header{position:fixed;top:0;left:0;width:100%;z-index:100;background:var(--heade
 .config-row:last-child{border-bottom:0}
 .config-row>span:last-child{min-width:0;text-align:right}
 .rich{white-space:pre-wrap}
-.aternos-switch{width:58px;height:28px;padding:2px;flex-shrink:0;display:flex;align-items:center;background:#293740;border:1px solid #3b4953;border-radius:3px;pointer-events:none;user-select:none}
+.aternos-switch{
+  width:60px;height:30px;
+  padding:2px;
+  border:1px solid #3b4953;
+  box-sizing:border-box;
+  overflow:hidden;
+  display:flex;align-items:center;
+  flex-shrink:0;margin:0;
+  background:#293740;border-radius:2px;
+  pointer-events:none;user-select:none;
+}
 .aternos-switch.enabled{justify-content:flex-end}
 .aternos-switch.disabled{justify-content:flex-start}
-.switch-icon{width:24px;height:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:900;line-height:1;border-radius:2px}
+.switch-icon{
+  width:25px;height:25px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;line-height:1;border-radius:1px;color:#fff;
+}
+.switch-icon i{display:block;line-height:1}
 .enabled .switch-icon{background:#20c997}
 .disabled .switch-icon{background:#f21d50}
 
@@ -378,35 +370,73 @@ header{position:fixed;top:0;left:0;width:100%;z-index:100;background:var(--heade
 .powered a{text-decoration:none}
 .powered b{color:var(--blue)}
 
-/* bot.properties */
 .props{padding:18px 0 8px}
 .props-title{display:flex;align-items:center;gap:12px;color:#fff;font-size:26px;font-weight:700;margin:0 0 20px}
 .props-title i{font-size:24px}
 .props-inline{background:var(--props-bg);margin:20px -16px 0;padding:18px 16px 4px}
 .prop{margin-bottom:18px}
-.prop-card{background:#efefef;color:var(--text);padding:10px 12px;min-height:54px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-radius:3px 3px 0 0}
-.prop-label{font-size:16px;font-weight:700;min-width:0;overflow-wrap:anywhere}
-.prop-opt{background:#2b3741;color:#fff;font-size:14px;font-weight:700;padding:10px 12px;border-radius:3px;min-width:90px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.prop-key{background:#252e36;color:#aab4bb;padding:8px 12px;font:12.5px/1.5 'Roboto Mono',monospace;overflow-wrap:anywhere;border-radius:0 0 3px 3px}
+.prop-card{
+  background:#efefef;color:var(--text);
+  height:40px;
+  padding:0 12px;
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-radius:3px 3px 0 0;
+}
+.prop-label{
+  font-size:16px;font-weight:700;min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.prop-opt{
+  background:#2b3741;color:#fff;font-size:14px;font-weight:700;
+  height:28px;line-height:28px;
+  width:140px;
+  padding:0 10px;
+  border-radius:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  flex-shrink:0;
+}
+.prop-key{background:#252e36;color:#aab4bb;padding:2px 12px;font:12.5px/1.5 'Roboto Mono',monospace;overflow-wrap:anywhere;border-radius:0 0 3px 3px}
 .prop-key b{color:#cdd5da}
 
-/* log */
 .log-heading{display:flex;justify-content:space-between;align-items:center;padding:17px 0 13px}
 .log-heading h1{color:var(--blue);font-size:34px;margin:0}
 .log-toolbar{display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap}
 .toolbar-btn{display:inline-flex;align-items:center;gap:6px;background:var(--header-light);color:#fff;border:0;border-radius:3px;padding:8px 11px;font-size:14px;font-weight:700}
-.console{background:var(--header);color:#edf0f2;margin:0 -16px;padding:15px 14px;height:calc(100dvh - 220px);min-height:220px;max-height:700px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:#687983 var(--header);font:300 11px/1.6 'Roboto Mono',monospace;overflow-wrap:anywhere}
+.console{background:var(--header);color:#edf0f2;margin:0 -16px;padding:15px 14px;height:calc(100dvh - 220px);min-height:220px;max-height:700px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-color:#687983 var(--header);font:400 11px/1.6 'Roboto Mono',monospace;overflow-wrap:anywhere}
 .console-row{margin-bottom:3px;white-space:pre-wrap}
-.log-time{color:#429be0;font-weight:400}
+.log-time{color:#429be0;font-weight:bold}
 .log-error{color:#ff7272}
 .log-warning{color:#e8b44f}
 button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
 @media(max-width:700px){
-  #Log{display:flex;flex-direction:column;min-height:calc(100dvh - 66px - env(safe-area-inset-top,0px))}
+  #Log{
+    display:flex;
+    flex-direction:column;
+    height:calc(100dvh - 66px - env(safe-area-inset-top,0px));
+    min-height:0;
+    margin:0 -16px;
+  }
   #Log[hidden]{display:none}
-  #Log .console{flex:1;height:auto;max-height:none;margin-bottom:0;padding-bottom:calc(15px + env(safe-area-inset-bottom,0px))}
+  #Log .log-heading,
+  #Log .log-toolbar{
+    padding-left:16px;
+    padding-right:16px;
+  }
+  #Log .console{
+    flex:1 1 auto;
+    height:auto;
+    min-height:0;
+    max-height:none;
+    margin:0;
+    padding-left:0;
+    padding-right:0;
+    padding-top:15px;
+    padding-bottom:calc(15px + env(safe-area-inset-bottom,0px));
+  }
 }
+body.on-log .container{padding-bottom:0}
+body.on-log{overflow:hidden}
 @media(max-width:500px){
   .header-inner{font-size:18px;padding-left:12px}
   .tab{padding:0 6px;font-size:12px}
@@ -417,7 +447,6 @@ button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 @media(max-width:400px){.tab svg,.tab i{display:none}}
 `;
 
-/* Page script, runs in the browser. Receives the first data snapshot from the server. */
 function client(init, refreshMs) {
   const $ = (s) => document.querySelector(s);
   let data = init;
@@ -471,7 +500,7 @@ function client(init, refreshMs) {
     $('#BotDetails').innerHTML = rowsHtml(detailRows(data));
     $('#BotInfo').innerHTML = rowsHtml(botInfoRows(data));
     const props = propsHtml(data);
-    if (props !== propsCache) { $('#PropsList').innerHTML = props; $('#PropsInline').innerHTML = props; propsCache = props; }
+    if (props !== propsCache) { $('#PropsInline').innerHTML = props; propsCache = props; }
     paintStatus();
     paintTimes();
     paintLogs();
@@ -513,8 +542,7 @@ function client(init, refreshMs) {
 
   document.querySelectorAll('[data-tab]').forEach((tab) => tab.addEventListener('click', () => {
     const name = tab.dataset.tab;
-    ['Dashboard', 'Props', 'Log'].forEach((n) => { $('#' + n).hidden = n !== name; });
-    document.body.classList.toggle('on-props', name === 'Props');
+    ['Dashboard', 'Log'].forEach((n) => { $('#' + n).hidden = n !== name; });
     document.body.classList.toggle('on-log', name === 'Log');
     document.querySelectorAll('[data-tab]').forEach((o) => {
       const active = o === tab;
@@ -611,7 +639,6 @@ function render(data, options = {}) {
   <div class="header-inner"><span>${esc(String(name).toUpperCase())}</span>
   <div class="tabs" role="tablist">
     <button class="tab active" role="tab" aria-selected="true" data-tab="Dashboard">${TAB_DASHBOARD}Dashboard</button>
-    <button class="tab" role="tab" aria-selected="false" data-tab="Props"><i class="fa-solid fa-file-code"></i>bot.properties</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="Log">${TAB_LOG}Log</button>
   </div>
   </div>
@@ -668,14 +695,7 @@ function render(data, options = {}) {
 
   <p class="message" id="Message" aria-live="polite"></p>
 
-  <p class="powered"><a href="https://github.com/realstarexx/AFK-Bot" target="_blank" rel="noopener noreferrer">Powered by <b>Starexx</b></a></p>
-</div>
-
-<div id="Props" hidden>
-  <div class="props">
-    <h1 class="props-title"><i class="fa-solid fa-file-code"></i>bot.properties</h1>
-    <div id="PropsList">${propsHtml(data)}</div>
-  </div>
+  <p class="powered"><a href="https://github.com/realstarexx/AFK-Bot" target="_blank" rel="noopener noreferrer">Created by <b>Starexx</b></a></p>
 </div>
 
 <div id="Log" hidden>
