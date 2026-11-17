@@ -1,5 +1,12 @@
 'use strict';
 
+/*
+  Dashboard page (HTML + server-side rendering).
+  render(data) takes the object returned by details() in src/index.js and returns the full HTML page.
+  The page is already filled in when it arrives, then the script keeps it live through GET /health
+  and controls the bot through POST /api ({ "action": "join" | "disconnect" }).
+*/
+
 const COLORS = {
   black: '#000000', dark_blue: '#0000AA', dark_green: '#00AA00', dark_aqua: '#00AAAA',
   dark_red: '#AA0000', dark_purple: '#AA00AA', gold: '#FFAA00', gray: '#AAAAAA',
@@ -375,6 +382,7 @@ header{position:fixed;top:0;left:0;width:100%;z-index:100;background:var(--heade
 .props{padding:18px 0 8px}
 .props-title{display:flex;align-items:center;gap:12px;color:#fff;font-size:26px;font-weight:700;margin:0 0 20px}
 .props-title i{font-size:24px}
+.props-inline{background:var(--props-bg);margin:20px -16px 0;padding:18px 16px 4px}
 .prop{margin-bottom:18px}
 .prop-card{background:#efefef;color:var(--text);padding:10px 12px;min-height:54px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-radius:3px 3px 0 0}
 .prop-label{font-size:16px;font-weight:700;min-width:0;overflow-wrap:anywhere}
@@ -463,7 +471,7 @@ function client(init, refreshMs) {
     $('#BotDetails').innerHTML = rowsHtml(detailRows(data));
     $('#BotInfo').innerHTML = rowsHtml(botInfoRows(data));
     const props = propsHtml(data);
-    if (props !== propsCache) { $('#PropsList').innerHTML = props; propsCache = props; }
+    if (props !== propsCache) { $('#PropsList').innerHTML = props; $('#PropsInline').innerHTML = props; propsCache = props; }
     paintStatus();
     paintTimes();
     paintLogs();
@@ -651,6 +659,11 @@ function render(data, options = {}) {
   <section class="section">
     <div class="section-title"><i class="fa-solid fa-robot"></i>Bot Information</div>
     <div class="rows" id="BotInfo">${rowsHtml(botInfoRows(data))}</div>
+  </section>
+
+  <section class="props props-inline">
+    <h2 class="props-title"><i class="fa-solid fa-file-code"></i>bot.properties</h2>
+    <div id="PropsInline">${propsHtml(data)}</div>
   </section>
 
   <p class="message" id="Message" aria-live="polite"></p>
