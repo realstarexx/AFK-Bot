@@ -32,7 +32,110 @@ function collectFlags(node, trail = [], out = {}) {
   return out;
 }
 
-const config = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config.yml'), 'utf8'));
+const KEYS = {
+  name: 'name',
+  accounts: 'accounts',
+  serverHost: 'server.host',
+  serverPort: 'server.port',
+  serverVersion: 'server.version',
+  serverViewDistance: 'server.view-distance',
+  serverConnectTimeout: 'server.connect-timeout',
+  serverKeepaliveTimeout: 'server.keepalive-timeout',
+  dashboardHost: 'dashboard.host',
+  dashboardPort: 'dashboard.port',
+  dashboardRefreshInterval: 'dashboard.refresh-interval',
+  dashboardSelfPingInterval: 'dashboard.self-ping-interval',
+  positionEnabled: 'position.enabled',
+  positionX: 'position.x',
+  positionY: 'position.y',
+  positionZ: 'position.z',
+  startupCommandsDelay: 'startup-commands.delay',
+  startupCommandsGap: 'startup-commands.gap',
+  startupCommandsList: 'startup-commands.list',
+  autoAuthEnabled: 'utils.auto-auth.enabled',
+  autoAuthPassword: 'utils.auto-auth.password',
+  autoAuthRegisterTrigger: 'utils.auto-auth.register-trigger',
+  autoAuthLoginTrigger: 'utils.auto-auth.login-trigger',
+  autoAuthRegisterCommand: 'utils.auto-auth.register-command',
+  autoAuthLoginCommand: 'utils.auto-auth.login-command',
+  antiAfkEnabled: 'utils.anti-afk.enabled',
+  antiAfkSneak: 'utils.anti-afk.sneak',
+  antiAfkInterval: 'utils.anti-afk.interval',
+  antiAfkJumpDuration: 'utils.anti-afk.jump-duration',
+  antiAfkJjumpDuration: 'utils.anti-afk.jump-duration',
+  chatLog: 'utils.chat-log',
+  autoReconnect: 'utils.auto-reconnect',
+  autoReconnectDelay: 'utils.auto-reconnect-delay',
+  maxReconnectDelay: 'utils.max-reconnect-delay',
+  reconnectBackoffStep: 'utils.reconnect-backoff-step',
+  serverWatchEnabled: 'utils.server-watch.enabled',
+  serverWatchInterval: 'utils.server-watch.interval',
+  serverWatchTimeout: 'utils.server-watch.timeout',
+  serverWatchMaxTries: 'utils.server-watch.max-tries',
+  serverWatchOfflinePattern: 'utils.server-watch.offline-pattern',
+  periodicRejoinEnabled: 'utils.periodic-rejoin.enabled',
+  periodicRejoinMinInterval: 'utils.periodic-rejoin.min-interval',
+  periodicRejoinMaxInterval: 'utils.periodic-rejoin.max-interval',
+  periodicRejoinReason: 'utils.periodic-rejoin.reason',
+  circleWalkEnabled: 'movement.circle-walk.enabled',
+  circleWalkRadius: 'movement.circle-walk.radius',
+  circleWalkSpeed: 'movement.circle-walk.speed',
+  circleWalkAngleStep: 'movement.circle-walk.angle-step',
+  lookAroundEnabled: 'movement.look-around.enabled',
+  lookAroundInterval: 'movement.look-around.interval',
+  lookAroundPitchRange: 'movement.look-around.pitch-range',
+  randomJumpEnabled: 'movement.random-jump.enabled',
+  randomJumpInterval: 'movement.random-jump.interval',
+  randomJumpDuration: 'movement.random-jump.jump-duration',
+  modulesAvoidMobs: 'modules.avoid-mobs',
+  modulesCombat: 'modules.combat',
+  modulesBeds: 'modules.beds',
+  modulesChat: 'modules.chat',
+  avoidMobsSafeDistance: 'avoid-mobs.safe-distance',
+  avoidMobsInterval: 'avoid-mobs.interval',
+  avoidMobsBackDuration: 'avoid-mobs.back-duration',
+  combatAttackMobs: 'combat.attack-mobs',
+  combatAttackRange: 'combat.attack-range',
+  combatAttackInterval: 'combat.attack-interval',
+  combatAutoEat: 'combat.auto-eat',
+  combatEatBelow: 'combat.eat-below',
+  bedsNightStart: 'beds.night-start',
+  bedsNightEnd: 'beds.night-end',
+  bedsSearchDistance: 'beds.search-distance',
+  bedsInterval: 'beds.interval',
+  chatRespond: 'chat.respond',
+  chatGreetings: 'chat.greetings',
+  chatReply: 'chat.reply',
+  discordEnabled: 'discord.enabled',
+  discordWebhook: 'discord.webhook',
+  discordEventsConnect: 'discord.events.connect',
+  discordEventsDisconnect: 'discord.events.disconnect',
+  discordColorsConnect: 'discord.colors.connect',
+  discordColorsDisconnect: 'discord.colors.disconnect'
+};
+
+function nest(flat) {
+  const out = {};
+  for (const [key, value] of Object.entries(flat)) {
+    if (!Object.hasOwn(KEYS, key)) {
+      console.warn(`[Config] Unknown key ignored: ${key}`);
+      continue;
+    }
+    const parts = KEYS[key].split('.');
+    const last = parts.pop();
+    let node = out;
+    for (const part of parts) node = node[part] ??= {};
+    node[last] = value;
+  }
+  return out;
+}
+
+function pick(node, dotted) {
+  return dotted.split('.').reduce((cur, part) => (cur == null ? cur : cur[part]), node);
+}
+
+const rawConfig = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config.yml'), 'utf8'));
+const config = nest(rawConfig);
 applyEnvFlags(config);
 const features = collectFlags(config);
 const { server, dashboard, position, utils, movement, modules, combat, beds, chat, discord } = config;
@@ -92,14 +195,17 @@ function sendJson(res, code, body, headers = {}) {
 const MASK = '********';
 
 function publicConfig() {
-  const copy = JSON.parse(JSON.stringify(config));
-  copy.server.host = serverHost;
-  copy.server.port = serverPort;
-  copy.dashboard.port = Number(PORT);
+  const copy = {};
+  for (const key of Object.keys(rawConfig)) {
+    const value = Object.hasOwn(KEYS, key) ? pick(config, KEYS[key]) : rawConfig[key];
+    copy[key] = JSON.parse(JSON.stringify(value ?? null));
+  }
+  if ('serverHost' in copy) copy.serverHost = serverHost;
+  if ('serverPort' in copy) copy.serverPort = serverPort;
+  if ('dashboardPort' in copy) copy.dashboardPort = Number(PORT);
   (copy.accounts || []).forEach((entry) => { if (entry.password) entry.password = MASK; });
-  const auth = copy.utils && copy.utils['auto-auth'];
-  if (auth) auth.password = (process.env.AUTH_PASSWORD || auth.password) ? MASK : '';
-  if (copy.discord) copy.discord.webhook = (process.env.DISCORD_WEBHOOK_URL || copy.discord.webhook) ? MASK : '';
+  if ('autoAuthPassword' in copy) copy.autoAuthPassword = (process.env.AUTH_PASSWORD || copy.autoAuthPassword) ? MASK : '';
+  if ('discordWebhook' in copy) copy.discordWebhook = (process.env.DISCORD_WEBHOOK_URL || copy.discordWebhook) ? MASK : '';
   return copy;
 }
 
