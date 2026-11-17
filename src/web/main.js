@@ -1,12 +1,5 @@
 'use strict';
 
-/*
-  Dashboard page (HTML + server-side rendering).
-  render(data) takes the object returned by details() in src/index.js and returns the full HTML page.
-  The page is already filled in when it arrives, then the script keeps it live through GET /health
-  and controls the bot through POST /api ({ "action": "join" | "disconnect" }).
-*/
-
 const COLORS = {
   black: '#000000', dark_blue: '#0000AA', dark_green: '#00AA00', dark_aqua: '#00AAAA',
   dark_red: '#AA0000', dark_purple: '#AA00AA', gold: '#FFAA00', gray: '#AAAAAA',
