@@ -1,4 +1,3 @@
-
 'use strict';
 
 const COLORS = {
@@ -54,6 +53,11 @@ function fmtDuration(s) {
   const m = Math.floor((s % 3600) / 60);
   const r = s % 60;
   return h ? h + 'h ' + m + 'm' : m ? m + 'm ' + r + 's' : r + 's';
+}
+
+function elapsed(from, now) {
+  if (from === null || from === undefined || !Number.isFinite(Number(from))) return null;
+  return Math.max(0, Math.floor((Number(now) - Number(from)) / 1000));
 }
 
 function statusView(data) {
@@ -231,7 +235,7 @@ function detailRows(data) {
     ['Reconnect Attempts', data.reconnectAttempts],
     ['Server Reachable', s.online === true ? 'Yes' : s.online === false ? 'No' : 'Unknown'],
     ['Last Server Check', s.checkedAt ? fmtTime(s.checkedAt) : '-'],
-    ['Failed Checks', s.maxChecks != null ? (s.failedChecks || 0) + '/' + s.maxChecks : '-'],
+    ['Failed Checks', s.maxChecks != null ? (s.failedChecks || 0) + (s.maxChecks > 0 ? '/' + s.maxChecks : '') : '-'],
     ['Last Disconnect', data.lastDisconnect ? { html: reasonHtml(data.lastDisconnect.reason) + esc(' (' + fmtTime(data.lastDisconnect.at) + ')') } : '-'],
     ['Last Kick', data.lastKick ? { html: reasonHtml(data.lastKick.reason) + esc(' (' + fmtTime(data.lastKick.at) + ')') } : '-']
   ];
@@ -447,16 +451,22 @@ body.on-log{overflow:hidden}
 @media(max-width:400px){.tab svg,.tab i{display:none}}
 `;
 
-function client(init, refreshMs) {
+function client(init) {
   const $ = (s) => document.querySelector(s);
   let data = init;
-  let fetchedAt = Date.now();
+  let skew = (init.now || Date.now()) - Date.now();
   let busy = false;
   let autoScroll = true;
   let mark = null;
   let propsCache = '';
+  let socket = null;
+  let retry = 0;
+  let retryTimer = null;
+  let logsDirty = false;
+  let lastMessage = Date.now();
 
   const say = (text) => { $('#Message').textContent = text || ''; };
+  const serverNow = () => Date.now() + skew;
 
   function paintStatus() {
     const v = statusView(data);
@@ -470,14 +480,13 @@ function client(init, refreshMs) {
   }
 
   function paintTimes() {
-    const extra = Math.floor((Date.now() - fetchedAt) / 1000);
-    $('#tUptime').textContent = fmtDuration(data.uptime + extra);
-    $('#tConnected').textContent = data.status === 'connected' && data.connectedFor != null
-      ? fmtDuration(data.connectedFor + extra)
-      : '-';
+    const now = serverNow();
+    $('#tUptime').textContent = fmtDuration(elapsed(data.startedAt, now));
+    $('#tConnected').textContent = data.status === 'connected' ? fmtDuration(elapsed(data.connectedAt, now)) : '-';
   }
 
   function paintLogs() {
+    logsDirty = false;
     const all = data.logs || [];
     let list = all;
     if (mark !== null) {
@@ -490,6 +499,13 @@ function client(init, refreshMs) {
     if (stick) box.scrollTop = box.scrollHeight;
   }
 
+  function paintLive() {
+    $('#BotDetails').innerHTML = rowsHtml(detailRows(data));
+    $('#BotInfo').innerHTML = rowsHtml(botInfoRows(data));
+    paintStatus();
+    paintTimes();
+  }
+
   function paint() {
     const server = data.server || {};
     const host = server.host || 'Unknown';
@@ -497,26 +513,64 @@ function client(init, refreshMs) {
     $('#Address').textContent = host + ':' + (server.port || 25565);
     $('#tName').textContent = data.name || 'AFK Bot';
     $('#tVersion').textContent = data.version || '-';
-    $('#BotDetails').innerHTML = rowsHtml(detailRows(data));
-    $('#BotInfo').innerHTML = rowsHtml(botInfoRows(data));
     const props = propsHtml(data);
     if (props !== propsCache) { $('#PropsInline').innerHTML = props; propsCache = props; }
-    paintStatus();
-    paintTimes();
+    paintLive();
     paintLogs();
   }
 
-  async function refresh() {
-    try {
-      const r = await fetch('/health', { cache: 'no-store' });
-      if (!r.ok) throw new Error(r.status);
-      data = await r.json();
-      fetchedAt = Date.now();
-      say('');
+  function receive(text) {
+    let m;
+    try { m = JSON.parse(text); } catch (e) { return; }
+    lastMessage = Date.now();
+    if (m.type === 'snapshot') {
+      data = m.data;
+      skew = (data.now || Date.now()) - Date.now();
       paint();
-    } catch (e) {
-      say('Cannot reach the bot server.');
+    } else if (m.type === 'state') {
+      skew = m.now - Date.now();
+      const rest = Object.assign({}, m.data);
+      const live = rest.server;
+      delete rest.server;
+      Object.assign(data, rest);
+      data.server = Object.assign({}, data.server, live);
+      paintLive();
+    } else if (m.type === 'log') {
+      data.logs = data.logs || [];
+      data.logs.push(m.line);
+      if (data.logs.length > 100) data.logs.shift();
+      if ($('#Log').hidden) logsDirty = true;
+      else paintLogs();
     }
+  }
+
+  function sync() {
+    if (socket && socket.readyState === 1) socket.send('sync');
+  }
+
+  function connect() {
+    clearTimeout(retryTimer);
+    if (socket && socket.readyState < 2) return;
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    socket = ws;
+    ws.onopen = () => { retry = 0; say(''); };
+    ws.onmessage = (e) => receive(e.data);
+    ws.onclose = () => {
+      if (socket !== ws) return;
+      socket = null;
+      say('Connection lost. Reconnecting...');
+      retryTimer = setTimeout(connect, Math.min(1000 * Math.pow(2, retry++), 10000));
+    };
+    ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  }
+
+  function reconnectNow() {
+    if (socket) {
+      socket.onclose = null;
+      try { socket.close(); } catch (e) {}
+      socket = null;
+    }
+    connect();
   }
 
   async function toggle() {
@@ -535,7 +589,7 @@ function client(init, refreshMs) {
     } catch (e) {
       say('Could not ' + (stopping ? 'stop' : 'start') + ' the bot.');
     }
-    await refresh();
+    sync();
     busy = false;
     paintStatus();
   }
@@ -578,9 +632,9 @@ function client(init, refreshMs) {
     }
   });
 
-  $('#RefreshLogs').addEventListener('click', async () => {
+  $('#RefreshLogs').addEventListener('click', () => {
     mark = null;
-    await refresh();
+    sync();
     paintLogs();
   });
   $('#ClearLogs').addEventListener('click', () => {
@@ -594,8 +648,16 @@ function client(init, refreshMs) {
     if (autoScroll) $('#Console').scrollTop = $('#Console').scrollHeight;
   });
 
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (!socket || socket.readyState > 1) return connect();
+    const before = lastMessage;
+    sync();
+    setTimeout(() => { if (lastMessage === before) reconnectNow(); }, 4000);
+  });
+
   paint();
-  setInterval(refresh, refreshMs);
+  connect();
   setInterval(paintTimes, 1000);
 }
 
@@ -603,20 +665,21 @@ const TAB_DASHBOARD = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 
 const TAB_LOG = '<svg viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M5.625 1.5c-1.036 0-1.875.84-1.875 1.875v17.25c0 1.035.84 1.875 1.875 1.875h12.75c1.035 0 1.875-.84 1.875-1.875V12.75A3.75 3.75 0 0 0 16.5 9h-1.875a1.875 1.875 0 0 1-1.875-1.875V5.25A3.75 3.75 0 0 0 9 1.5H5.625ZM7.5 15a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 7.5 15Zm.75 2.25a.75.75 0 0 0 0 1.5H12a.75.75 0 0 0 0-1.5H8.25Z" clip-rule="evenodd"/><path d="M12.971 1.816A5.23 5.23 0 0 1 14.25 5.25v1.875c0 .207.168.375.375.375H16.5a5.23 5.23 0 0 1 3.434 1.279 9.768 9.768 0 0 0-6.963-6.963Z"/></svg>';
 
 const SHARED = [
-  esc, fmtTime, fmtDuration, statusView, flag, wrap, legacyHtml, compHtml, nbtToJson, reasonHtml,
+  esc, fmtTime, fmtDuration, elapsed, statusView, flag, wrap, legacyHtml, compHtml, nbtToJson, reasonHtml,
   richInline, logParts, logRowHtml, switchHtml, valHtml, rowHtml, rowsHtml, detailRows, botInfoRows,
   flatten, propHtml, propsHtml
 ].map(String).join('\n');
 
-function render(data, options = {}) {
-  const refreshMs = Number(options.refreshInterval) > 0 ? Number(options.refreshInterval) : 5000;
+function render(data) {
   const name = data.name || 'AFK Bot';
   const server = data.server || {};
   const host = server.host || 'Unknown';
   const v = statusView(data);
 
   const logRows = (data.logs || []).map(logRowHtml).join('');
-  const connectedFor = data.status === 'connected' ? fmtDuration(data.connectedFor) : '-';
+  const now = data.now || Date.now();
+  const upFor = fmtDuration(elapsed(data.startedAt, now));
+  const connectedFor = data.status === 'connected' ? fmtDuration(elapsed(data.connectedAt, now)) : '-';
   const init = JSON.stringify(data).replace(/</g, '\\u003c');
   const prelude = `const COLORS=${JSON.stringify(COLORS)};const LEGACY=${JSON.stringify(LEGACY)};const LANG=${JSON.stringify(LANG)};`;
 
@@ -671,7 +734,7 @@ function render(data, options = {}) {
   <section class="section">
     <div class="section-title"><i class="fa-solid fa-circle-info"></i>Software Information</div>
     <div class="rows">
-      <div class="config-row"><span>Uptime</span><span id="tUptime">${fmtDuration(data.uptime)}</span></div>
+      <div class="config-row"><span>Uptime</span><span id="tUptime">${upFor}</span></div>
       <div class="config-row"><span>Connected For</span><span id="tConnected">${connectedFor}</span></div>
       <div class="config-row"><span>App Name</span><span id="tName">${esc(name)}</span></div>
       <div class="config-row"><span>App Version</span><span id="tVersion">${esc(data.version || '-')}</span></div>
@@ -717,7 +780,7 @@ function render(data, options = {}) {
 <script>
 ${prelude}
 ${SHARED}
-(${client})(JSON.parse(document.getElementById('Init').textContent), ${refreshMs});
+(${client})(JSON.parse(document.getElementById('Init').textContent));
 </script>
 </body>
 </html>`;
