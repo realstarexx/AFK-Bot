@@ -56,15 +56,16 @@ Toggle names follow the path of the setting in `config.yml`, in uppercase, with 
 
 Open the app URL in a browser (`http://localhost:5000` locally) to get the dashboard.
 
-* **Details** tab: server address, bot status (Online, Connecting, Offline), **Start** / **Stop** button, uptime, bot and server info
+* **Details** tab: server address, bot status (Online, Connecting, Offline), **Start** / **Stop** button, bot information and details (uptime, reconnect attempts, server check, last disconnect and kick), player stats (position, health, food, latency, dimension), the bot configuration, and the full `config.yml` settings grouped by section. Passwords and the Discord webhook are masked
 * **Logs** tab: last 100 log lines with Refresh, Clear, Auto-scroll and Share
 
-**Start** runs the `join` action and **Stop** runs `disconnect` (see below). The page refreshes every `dashboard.refresh-interval` ms.
+**Start** runs the `join` action and **Stop** runs `disconnect` (see below). The page updates live over a WebSocket, so nothing is polled. Uptime and connected time are counted in the browser from the start and connect timestamps. While at least one dashboard is open, player stats are pushed at most every `dashboardRefreshInterval` ms (and only when they changed). With no dashboard open, no live updates are processed.
 
 ### Routes
 
 * `GET /` Dashboard (HTML)
-* `GET /health` Bot Details as JSON (status, uptime, server, player, last 100 log lines), used for health checks
+* `GET /health` Bot Details as JSON (status, start and connect timestamps, server, player, last 100 log lines), used for health checks
+* `GET /ws` WebSocket used by the dashboard for live updates (same-origin only)
 * `GET /ping` Returns `pong`
 * `POST /api` Controls the bot
 
