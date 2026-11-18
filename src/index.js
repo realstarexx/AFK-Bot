@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const readline = require('readline');
 const yaml = require('js-yaml');
 const mineflayer = require('mineflayer');
@@ -171,6 +172,8 @@ const state = {
   lastKick: null
 };
 const logs = [];
+const sockets = new Set();
+const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 let bot = null;
 let timers = [];
@@ -181,11 +184,22 @@ let connectTimer = null;
 const log = (tag, message) => {
   const line = `[${tag}] ${message}`;
   console.log(line);
-  logs.push(`${new Date().toISOString()} ${line.slice(0, 500)}`);
+  const stored = `${new Date().toISOString()} ${line.slice(0, 500)}`;
+  logs.push(stored);
   if (logs.length > LOG_LIMIT) logs.shift();
+  if (sockets.size) {
+    sendAll(JSON.stringify({ type: 'log', line: stored }));
+    pushState();
+  }
 };
 const uptime = () => Math.floor((Date.now() - state.startedAt) / 1000);
 const round = (value) => Math.round(value * 10) / 10;
+const span = (ms) => {
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return h ? `${h}h ${m}m` : m ? `${m}m ${total % 60}s` : `${total}s`;
+};
 
 function sendJson(res, code, body, headers = {}) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers });
@@ -226,21 +240,15 @@ function currentStatus() {
   return state.connected ? 'connected' : 'disconnected';
 }
 
-function details() {
+function liveState() {
   const live = bot && state.connected ? bot : null;
   const pos = live && live.entity ? live.entity.position : null;
   return {
-    name: config.name,
-    version: pkg.version,
     status: currentStatus(),
-    uptime: uptime(),
-    connectedFor: state.connectedAt ? Math.floor((Date.now() - state.connectedAt) / 1000) : null,
+    startedAt: state.startedAt,
+    connectedAt: state.connectedAt,
     reconnectAttempts: state.attempts,
-    account: { username: account.username, type: account.type },
     server: {
-      host: serverHost,
-      port: serverPort,
-      version: server.version,
       online: state.serverOnline,
       checkedAt: state.serverCheckedAt,
       failedChecks: state.failedChecks,
@@ -255,12 +263,168 @@ function details() {
       playersOnline: Object.keys(live.players).length
     } : null,
     lastDisconnect: state.lastDisconnect,
-    lastKick: state.lastKick,
+    lastKick: state.lastKick
+  };
+}
+
+function details() {
+  const live = liveState();
+  return {
+    name: config.name,
+    version: pkg.version,
+    now: Date.now(),
+    ...live,
+    account: { username: account.username, type: account.type },
+    server: { host: serverHost, port: serverPort, version: server.version, ...live.server },
     autoReconnect: !!utils['auto-reconnect'],
     config: shownConfig,
     features,
     logs
   };
+}
+
+function wsFrame(opcode, payload) {
+  const body = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
+  const size = body.length;
+  let head;
+  if (size < 126) {
+    head = Buffer.from([0x80 | opcode, size]);
+  } else if (size < 65536) {
+    head = Buffer.alloc(4);
+    head[0] = 0x80 | opcode;
+    head[1] = 126;
+    head.writeUInt16BE(size, 2);
+  } else {
+    head = Buffer.alloc(10);
+    head[0] = 0x80 | opcode;
+    head[1] = 127;
+    head.writeBigUInt64BE(BigInt(size), 2);
+  }
+  return Buffer.concat([head, body]);
+}
+
+function writeFrame(socket, frame) {
+  if (socket.destroyed) return;
+  if (socket.writableLength > 1048576) return socket.destroy();
+  socket.write(frame);
+}
+
+function sendAll(text) {
+  const frame = wsFrame(1, text);
+  for (const socket of sockets) writeFrame(socket, frame);
+}
+
+let pushTimer = null;
+let lastState = '';
+let liveTimers = [];
+
+function pushState() {
+  if (pushTimer || !sockets.size) return;
+  pushTimer = setTimeout(() => {
+    pushTimer = null;
+    if (!sockets.size) return;
+    const body = JSON.stringify(liveState());
+    if (body === lastState) return;
+    lastState = body;
+    sendAll(`{"type":"state","now":${Date.now()},"data":${body}}`);
+  }, 200);
+}
+
+function heartbeat() {
+  const ping = wsFrame(9, Buffer.alloc(0));
+  for (const socket of sockets) {
+    if (!socket.alive) {
+      socket.destroy();
+      continue;
+    }
+    socket.alive = false;
+    writeFrame(socket, ping);
+  }
+}
+
+function startLive() {
+  if (liveTimers.length) return;
+  liveTimers = [setInterval(pushState, dashboard['refresh-interval']), setInterval(heartbeat, 30000)];
+}
+
+function stopLive() {
+  liveTimers.forEach(clearInterval);
+  liveTimers = [];
+  clearTimeout(pushTimer);
+  pushTimer = null;
+  lastState = '';
+}
+
+function wsRead(socket, chunk) {
+  socket.wsBuffer = socket.wsBuffer ? Buffer.concat([socket.wsBuffer, chunk]) : chunk;
+  while (socket.wsBuffer.length >= 2) {
+    const buf = socket.wsBuffer;
+    const opcode = buf[0] & 0x0f;
+    let size = buf[1] & 0x7f;
+    let offset = 2;
+    if (!(buf[1] & 0x80) || size === 127) return socket.destroy();
+    if (size === 126) {
+      if (buf.length < 4) return;
+      size = buf.readUInt16BE(2);
+      offset = 4;
+    }
+    if (size > 1024) return socket.destroy();
+    if (buf.length < offset + 4 + size) return;
+    const mask = buf.subarray(offset, offset + 4);
+    const payload = Buffer.from(buf.subarray(offset + 4, offset + 4 + size));
+    for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+    socket.wsBuffer = buf.subarray(offset + 4 + size);
+    socket.alive = true;
+    if (opcode === 0x8) {
+      writeFrame(socket, wsFrame(8, Buffer.alloc(0)));
+      return socket.end();
+    }
+    if (opcode === 0x9) writeFrame(socket, wsFrame(0xa, payload));
+    else if (opcode === 0x1 && payload.toString() === 'sync') writeFrame(socket, wsFrame(1, JSON.stringify({ type: 'snapshot', data: details() })));
+  }
+}
+
+function sameOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+function acceptSocket(req, socket) {
+  let pathname;
+  try {
+    pathname = new URL(req.url, 'http://localhost').pathname;
+  } catch {
+    pathname = '';
+  }
+  const key = req.headers['sec-websocket-key'];
+  const upgrade = String(req.headers.upgrade || '').toLowerCase();
+  if (pathname !== '/ws' || !key || upgrade !== 'websocket' || !sameOrigin(req)) {
+    socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    return;
+  }
+  const accept = crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  socket.setNoDelay(true);
+  socket.setTimeout(0);
+  socket.alive = true;
+  socket.wsBuffer = null;
+  sockets.add(socket);
+  const drop = () => {
+    sockets.delete(socket);
+    socket.destroy();
+    if (!sockets.size) stopLive();
+  };
+  socket.on('data', (chunk) => wsRead(socket, chunk));
+  socket.on('close', drop);
+  socket.on('error', drop);
+  socket.on('end', drop);
+  writeFrame(socket, wsFrame(1, JSON.stringify({ type: 'snapshot', data: details() })));
+  startLive();
 }
 
 function readJson(req) {
@@ -304,7 +468,7 @@ async function handleApi(req, res) {
   }
 }
 
-http.createServer((req, res) => {
+const web = http.createServer((req, res) => {
   let pathname;
   try {
     pathname = new URL(req.url, 'http://localhost').pathname;
@@ -317,12 +481,15 @@ http.createServer((req, res) => {
     return sendJson(res, 405, { ok: false, error: 'method not allowed' }, { Allow: 'GET, HEAD' });
   }
   if (pathname === '/') {
-    return sendHtml(res, 200, dashboardPage.render(details(), { refreshInterval: dashboard['refresh-interval'] }), req.method === 'HEAD');
+    return sendHtml(res, 200, dashboardPage.render(details()), req.method === 'HEAD');
   }
   if (pathname === '/health') return sendJson(res, 200, details());
   if (pathname === '/ping') return res.end('pong');
   sendJson(res, 404, { ok: false, error: 'not found' });
-}).listen(PORT, dashboard.host, () => log('Server', `Listening on port ${PORT}`));
+});
+
+web.on('upgrade', acceptSocket);
+web.listen(PORT, dashboard.host, () => log('Server', `Listening on port ${PORT}`));
 
 const publicUrl = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
 if (publicUrl) {
@@ -409,7 +576,7 @@ function scheduleReconnect(delay) {
       if (!(await serverOnline())) {
         if (generation !== reconnectGen || state.paused) return;
         state.failedChecks++;
-        if (state.failedChecks >= maxChecks) {
+        if (maxChecks > 0 && state.failedChecks >= maxChecks) {
           state.paused = true;
           log('Watch', `Server still offline after ${maxChecks} checks, stopping. Use the join action to start again`);
           if (discord && discord.events && discord.events.disconnect) {
@@ -417,7 +584,7 @@ function scheduleReconnect(delay) {
           }
           return;
         }
-        log('Watch', `Server offline, check ${state.failedChecks}/${maxChecks}, next in ${checkInterval / 1000}s`);
+        log('Watch', `Server offline, check ${state.failedChecks}${maxChecks > 0 ? `/${maxChecks}` : ''}, next in ${checkInterval / 1000}s`);
         scheduleReconnect(checkInterval);
         return;
       }
@@ -654,7 +821,8 @@ function createBot() {
   });
 
   current.on('end', (reason) => {
-    log('Bot', `Disconnected: ${reason || 'unknown'}`);
+    const after = state.connectedAt ? ` after ${span(Date.now() - state.connectedAt)} connected` : '';
+    log('Bot', `Disconnected: ${reason || 'unknown'}${after}`);
     state.connected = false;
     state.connectedAt = null;
     state.lastDisconnect = { reason: reason || 'unknown', at: new Date().toISOString() };
@@ -697,10 +865,7 @@ readline.createInterface({ input: process.stdin, terminal: false }).on('line', (
 
 process.on('uncaughtException', (err) => {
   log('Fatal', err.message);
-  if (utils['auto-reconnect']) {
-    stopTimers();
-    scheduleReconnect();
-  }
+  if (!state.connected && !state.paused && utils['auto-reconnect']) scheduleReconnect();
 });
 
 process.on('unhandledRejection', (reason) => log('Fatal', String(reason)));
